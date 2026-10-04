@@ -1,6 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
-import { hashApiKey, validateWithGatekeeper, settleUsage } from '../../db/supabase.js';
-import { resolveTargetModel, estimateTokens } from '../../router/axis-auto.js';
+import { hashApiKey, validateWithGatekeeper, settleUsage, supabase } from '../../db/supabase.js';
+import { resolveAxisRoute, estimateTokens } from '../../router/axis-auto.js';
 import { executeCompletionWithFallback, executeStreamingCompletion } from '../../openrouter/client.js';
 import { config } from '../../config/env.js';
 
@@ -39,11 +39,29 @@ export const chatRoutes: FastifyPluginAsync = async (fastify) => {
     const isStream = Boolean(body.stream);
     const maxTokens = body.max_tokens || body.max_completion_tokens || config.defaultMaxOutputTokens;
 
-    // 3. Routage intelligent d'amont (Axis Auto)
-    const route = resolveTargetModel(requestedModel, body.messages, body.tools);
+    // 3. Récupération du palier de l'utilisateur pour le routage intelligent
+    let userTierNumber = 1;
+    try {
+      const { data: keyData } = await supabase
+        .from('api_keys')
+        .select('subscription_id, subscriptions(tier_number)')
+        .eq('key_hash', keyHash)
+        .maybeSingle();
+
+      const sub = keyData?.subscriptions as any;
+      if (sub?.tier_number) {
+        userTierNumber = sub.tier_number;
+      }
+    } catch {
+      // Valeur par défaut : palier 1
+      userTierNumber = 1;
+    }
+
+    // 4. Routage intelligent Axis Auto (Flux en 2 étapes : Décision puis Exécution)
+    const route = resolveAxisRoute(requestedModel, body.messages, userTierNumber, body.tools);
     const estimatedInputTokens = estimateTokens(body.messages);
 
-    // 4. Passage par le filtre de sécurité synchrone (Gatekeeper)
+    // 5. Validation atomique Gatekeeper via procédure RPC PostgreSQL pure
     const gatekeeperResult = await validateWithGatekeeper(
       keyHash,
       route.targetModel,
@@ -58,25 +76,25 @@ export const chatRoutes: FastifyPluginAsync = async (fastify) => {
           message: gatekeeperResult.error_message || 'Requête refusée par le Gatekeeper.',
           type: gatekeeperResult.error_code || 'gatekeeper_rejection',
           code: gatekeeperResult.error_code || 'FORBIDDEN',
+          details: gatekeeperResult.details || null,
           current_balance_usd: gatekeeperResult.current_balance_usd,
           estimated_cost_usd: gatekeeperResult.estimated_cost_usd,
         },
       });
     }
 
-    // 5. Préparation des modèles candidats avec chaîne de secours
+    // 6. Chaîne de secours
     const candidateModels = [
       ...(gatekeeperResult.fallback_model_id ? [gatekeeperResult.fallback_model_id] : []),
       ...route.fallbackChain,
     ];
 
-    // Enrichissement du body avec le modèle résolu
     const openRouterPayload = {
       ...body,
       model: route.targetModel,
     };
 
-    // 6. Traitement A : Mode STREAMING (Server-Sent Events)
+    // 7. Mode STREAMING (Server-Sent Events)
     if (isStream) {
       try {
         const streamResult = await executeStreamingCompletion(openRouterPayload, candidateModels);
@@ -93,17 +111,16 @@ export const chatRoutes: FastifyPluginAsync = async (fastify) => {
           });
         }
 
-        // Configuration des headers SSE
         reply.raw.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache, no-transform',
           'Connection': 'keep-alive',
           'X-Axis-Model': streamResult.modelUsed,
-          'X-Axis-Tier': route.tier,
+          'X-Axis-Power-Level': route.powerLevel,
+          'X-Axis-Tier': String(gatekeeperResult.tier_number || userTierNumber),
           'X-Axis-Fallback': streamResult.fallbackOccurred ? 'true' : 'false',
         });
 
-        // Découplage : Lecture du flux pour piping immédiat et décompte de tokens
         let outputTokensCount = 0;
         let streamClosed = false;
 
@@ -114,14 +131,10 @@ export const chatRoutes: FastifyPluginAsync = async (fastify) => {
           try {
             while (true) {
               const { done, value } = await reader.read();
-              if (done) {
-                break;
-              }
+              if (done) break;
 
-              // Transmission immédiate au client sans latence
               reply.raw.write(value);
 
-              // Analyse non-bloquante pour comptage des tokens
               const chunkText = decoder.decode(value, { stream: true });
               const lines = chunkText.split('\n');
               for (const line of lines) {
@@ -131,24 +144,21 @@ export const chatRoutes: FastifyPluginAsync = async (fastify) => {
                     if (parsed.usage) {
                       outputTokensCount = parsed.usage.completion_tokens || outputTokensCount;
                     } else if (parsed.choices?.[0]?.delta?.content) {
-                      // Approximation continue si usage non fourni
                       outputTokensCount += Math.max(1, Math.ceil(parsed.choices[0].delta.content.length / 3.8));
                     }
-                  } catch {
-                    // Ignorer les fragments JSON incomplets en streaming
-                  }
+                  } catch {}
                 }
               }
             }
           } catch (err) {
-            console.error('[Streaming Pipeline Error]', err);
+            console.error('[Streaming Error]', err);
           } finally {
             if (!streamClosed) {
               streamClosed = true;
               reply.raw.end();
             }
 
-            // Décompte asynchrone découplé en base de données
+            // Décompte de sortie découplé via RPC PostgreSQL
             const durationMs = Date.now() - startTime;
             const finalOutputTokens = Math.max(1, outputTokensCount);
             settleUsage({
@@ -165,17 +175,17 @@ export const chatRoutes: FastifyPluginAsync = async (fastify) => {
         await processStream();
         return reply;
       } catch (streamErr: any) {
-        console.error('[Streaming Initiation Error]', streamErr);
+        console.error('[Streaming Init Error]', streamErr);
         return reply.status(500).send({
           error: {
-            message: 'Erreur lors de l\'initialisation du flux de streaming.',
+            message: 'Erreur lors de l\'initialisation du streaming.',
             details: streamErr.message,
           },
         });
       }
     }
 
-    // 7. Traitement B : Mode NON-STREAMING (JSON Standard)
+    // 8. Mode NON-STREAMING (JSON Standard)
     const completionResult = await executeCompletionWithFallback(
       openRouterPayload,
       candidateModels
@@ -183,7 +193,7 @@ export const chatRoutes: FastifyPluginAsync = async (fastify) => {
 
     const durationMs = Date.now() - startTime;
 
-    // Décompte réel asynchrone (Découplé du chemin critique)
+    // Décompte asynchrone découplé via RPC PostgreSQL
     queueMicrotask(() => {
       settleUsage({
         keyHash,
@@ -194,14 +204,14 @@ export const chatRoutes: FastifyPluginAsync = async (fastify) => {
         statusCode: completionResult.statusCode,
         errorMessage: completionResult.statusCode >= 400 ? JSON.stringify(completionResult.body) : null,
       }).catch((settleErr) => {
-        console.error('[Settlement Error in Background]', settleErr);
+        console.error('[Settlement Error]', settleErr);
       });
     });
 
-    // Envoi de la réponse au client avec métadonnées Axis AI
     reply
       .header('X-Axis-Model', completionResult.modelUsed)
-      .header('X-Axis-Tier', route.tier)
+      .header('X-Axis-Power-Level', route.powerLevel)
+      .header('X-Axis-Tier', String(gatekeeperResult.tier_number || userTierNumber))
       .header('X-Axis-Fallback', completionResult.fallbackOccurred ? 'true' : 'false')
       .header('X-Axis-Routing-Reason', route.routingReason)
       .header('X-Axis-Latency-Ms', durationMs.toString())

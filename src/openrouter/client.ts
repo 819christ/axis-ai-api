@@ -1,5 +1,4 @@
 import { config } from '../config/env.js';
-import { FALLBACK_CHAINS } from '../router/axis-auto.js';
 
 export interface OpenRouterChatRequest {
   model: string;

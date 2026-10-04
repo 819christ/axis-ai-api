@@ -1,9 +1,0 @@
-# Project: Axis AI api
-> Synchronized workspace mirror for AI Agents.
-
-## System Status
-- Status & Diagnostics: ai/status.txt
-
-## File Index
-- package-lock.json: ai/raw/package-lock.json
-- package.json: ai/raw/package.json

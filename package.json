@@ -9,7 +9,9 @@
     "build": "tsc",
     "sync-models": "tsx scripts/sync-openrouter-models.ts",
     "generate-key": "tsx scripts/generate-demo-key.ts",
-    "test-proxy": "tsx scripts/test-proxy.ts"
+    "test-proxy": "tsx scripts/test-proxy.ts",
+    "test": "tsx scripts/run-all-tests.ts",
+    "test-all": "tsx scripts/run-all-tests.ts"
   },
   "keywords": ["proxy", "openrouter", "gatekeeper", "supabase", "llm-router"],
   "license": "ISC",

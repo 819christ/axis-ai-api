@@ -1,0 +1,86 @@
+================================================================================
+  AXIS AUTO / ACCESS AI - JOURNAL D'EXÉCUTION DES TESTS (TEST LOG)
+  Date d'exécution : 2026-10-04T13:28:35.220Z
+  Environnement : Node.js v22.17.0 / Fastify / PostgreSQL Supabase RPC
+================================================================================
+[SUCCESS] TEST: Palier P1 : Calcul MaxAllowedCost
+  Objectif : Valider que P1 = 5.00 * 1 = 5$/1M tokens
+  Détails  : MaxAllowedCost(P1) = 5.00$ / 1M tokens conforme à la formule.
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Palier P2 : Calcul MaxAllowedCost
+  Objectif : Valider que P2 = 5.00 * 2 = 10$/1M tokens
+  Détails  : MaxAllowedCost(P2) = 10.00$ / 1M tokens conforme à la formule.
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Palier P3 : Calcul MaxAllowedCost
+  Objectif : Valider que P3 = 5.00 * 3 = 15$/1M tokens
+  Détails  : MaxAllowedCost(P3) = 15.00$ / 1M tokens conforme à la formule.
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Palier P4 : Calcul MaxAllowedCost
+  Objectif : Valider que P4 = 5.00 * 4 = 20$/1M tokens
+  Détails  : MaxAllowedCost(P4) = 20.00$ / 1M tokens conforme à la formule.
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Palier P5 : Calcul MaxAllowedCost
+  Objectif : Valider que P5 = 5.00 * 5 = 25$/1M tokens
+  Détails  : MaxAllowedCost(P5) = 25.00$ / 1M tokens conforme à la formule.
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Palier P6 : Calcul MaxAllowedCost
+  Objectif : Valider que P6 = 5.00 * 6 = 30$/1M tokens
+  Détails  : MaxAllowedCost(P6) = 30.00$ / 1M tokens conforme à la formule.
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Palier P7 : Calcul MaxAllowedCost
+  Objectif : Valider que P7 = 5.00 * 7 = 35$/1M tokens
+  Détails  : MaxAllowedCost(P7) = 35.00$ / 1M tokens conforme à la formule.
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Palier 1 : Modèle GPT-4o Mini (0.75$/1M)
+  Objectif : Vérifier qu un modèle sous le plafond de 5$/1M est autorisé pour P1.
+  Détails  : Requête autorisée avec succès (coût combiné 0.75$ <= 5.00$).
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Palier 1 : Modèle Claude 3.5 Sonnet (18$/1M) - Rejet strict
+  Objectif : Vérifier le rejet immédiat avec HTTP 403 si le modèle dépasse le palier.
+  Détails  : Rejet HTTP 403 conforme : "Ce modèle n'est pas inclus dans votre palier actuel." (Modèle 18.00$/1M > Plafond P1 5.00$/1M).
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Palier 4 : Modèle Claude 3.5 Sonnet (18$/1M)
+  Objectif : Vérifier que Claude 3.5 Sonnet est autorisé sur le Palier 4 (plafond 20$/1M).
+  Détails  : Requête autorisée avec succès (coût combiné 18.00$ <= 20.00$).
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Expiration automatique à J+31 (30 jours calendaires)
+  Objectif : Vérifier la désactivation automatique de l abonnement et de la clé à l échéance.
+  Détails  : Abonnement et clé désactivés (HTTP 402 SUBSCRIPTION_EXPIRED).
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Coupure nette à épuisement total du solde ($0.00)
+  Objectif : Vérifier le blocage immédiat quand balance_usd atteint 0.
+  Détails  : Requête bloquée avec code SUBSCRIPTION_DEPLETED.
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Anti-abus : Tentative de souscription avant J-7
+  Objectif : Empêcher la double souscription ou le cumul de crédits à plus de 7 jours de l échéance.
+  Détails  : Rejet HTTP 409 conforme : "Souscription anticipée non autorisée en dehors de la fenêtre des 7 derniers jours."
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Règle J-7 : Souscription autorisée en statut pending
+  Objectif : Enregistrer le nouveau pack en attente pour une activation transparente à l expiration.
+  Détails  : Pack en attente créé avec succès (ID: e5fc35cd-468d-4797-9c72-54988f672073, Début prévu à l expiration exacte de l actuel).
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Anti-cumul : Refus d un second pack en attente
+  Objectif : Empêcher l accumulation multiple de packs en attente.
+  Détails  : Refus conforme : PENDING_ALREADY_EXISTS.
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Relais sans couture : Activation atomique du pack pending à J+30
+  Objectif : Garantir la continuité de service sans interruption lors de l expiration de l ancien abonnement.
+  Détails  : Continuité parfaite : l'abonnement P3 en attente a été activé automatiquement sans interruption de service.
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Axis Auto - Étape 1 (Décision)
+  Objectif : Classification d intention parmi les 4 niveaux : low, medium, high, ultra.
+  Détails  : Décisions validées : Simple->low, Code->high, Raisonnement->ultra.
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Axis Auto - Étape 2 (Exécution Palier 1 pour tâche Ultra)
+  Objectif : Sélectionner le meilleur modèle disponible sans jamais dépasser le plafond du palier.
+  Détails  : Modèle sélectionné : DeepSeek R1 Reasoning (2.74$/1M <= 5.00$).
+--------------------------------------------------------------------------------
+[SUCCESS] TEST: Concurrence : 20 requêtes simultanées avec verrouillage atomique
+  Objectif : Garantir l intégrité stricte du solde et prévenir le double-spending.
+  Détails  : Solde final cohérent : Restant=$8.5000, Consommé=$1.5000, Somme=$10.00.
+--------------------------------------------------------------------------------
+
+================================================================================
+  RÉSUMÉ FINAL : 19/19 tests réussis (100%)
+  Échecs : 0
+================================================================================

@@ -2,204 +2,116 @@
 
 Proxy d'API haute performance, sécurisé et intelligent pour **OpenRouter**, hébergé avec **Supabase** et propulsé par le routeur dynamique **Axis Auto**.
 
-Ce système agit comme un **Gatekeeper** : il intercepte chaque requête, vérifie la validité de la clé API, contrôle le budget restant en USD sur l'abonnement rattaché selon la formule d'estimation, dispatche intelligemment les prompts vers le modèle optimal, et met à jour les soldes de manière découplée sans goulot d'étranglement.
+Ce système agit comme un **Gatekeeper atomique** : il intercepte chaque requête, vérifie la validité de la clé API, contrôle le budget restant en USD sur l'abonnement rattaché, applique la formule mathématique de filtrage par palier ($P_1$ à $P_7$), dispatche intelligemment les prompts en 2 étapes, et met à jour les soldes de manière atomique sans goulot d'étranglement.
 
 ---
 
 ## 📋 Architecture & Fonctionnalités Clés
 
-1. **Gatekeeper Synchrone (Procédure stockée PL/pgSQL)** :
-   - Vérification de la clé API hachée (SHA-256).
-   - Détection des modèles gratuits (coût 0.00$) : passage immédiat sans déduction de solde.
-   - Modèles payants : estimation budgétaire rigoureuse ($E = \text{Tokens entrée} \times \text{prix entrée} + \text{Max Tokens} \times \text{prix sortie}$).
-   - Rejet net (HTTP 402 - *Payment Required*) si solde insuffisant.
-   - Décompte asynchrone découplé en base après consommation réelle des tokens.
+1. **Procédure Stockée RPC PostgreSQL Pure (Zéro Edge Function)** :
+   - Atomicité stricte avec verrouillage de ligne (`FOR UPDATE`) pour éliminer tout risque de double dépense en forte concurrence.
+   - Contrôle du cycle de vie des 30 jours et bascule automatique.
+   - Rejet net (**HTTP 402**) si le solde est épuisé ou l'abonnement expiré.
+   - Rejet immédiat (**HTTP 403**) si le modèle demandé dépasse le plafond du palier.
 
-2. **Routeur Intelligent d'Amont ("Axis Auto")** :
-   - Analyse d'intention et heuristiques de complexité (détection de code, mots-clés de raisonnement, contexte volumineux, function calling).
-   - Routes virtuelles :
-     - `axis-auto` : Sélection automatique entre *economy* et *performance*.
-     - `axis-free` : Routage exclusif sur le pool de modèles gratuits.
-     - `axis-economy` : Modèles ultra-rapides et économiques (ex: GPT-4o Mini, Gemini 2.0 Flash).
-     - `axis-performance` : Modèles d'ingénierie et de raisonnement (ex: Claude 3.5 Sonnet, DeepSeek R1).
-   - **Système de Fallback (Secours)** : Basculement automatique et transparent vers un modèle équivalent en cas d'erreur 502/503/504 ou timeout d'OpenRouter.
+2. **Les 7 Paliers d'Abonnement et Formule Mathématique de Filtrage** :
+   Chaque palier $P_i$ ($i \in [1..7]$) intègre la formule mathématique de filtrage par coût combiné maximum (Entrée + Sortie) par million de tokens :
+   $$\text{MaxAllowedCost}(P_i) = \alpha \times i + \beta \quad (\text{avec } \alpha = 5.00\$ \text{ et } \beta = 0.00\$)$$
+   - **Palier 1 (Starter)** : $\text{MaxAllowedCost} = 5.00\$ / 1\text{M}$ (ex: GPT-4o Mini, Gemini 2.0 Flash, DeepSeek-Chat, modèles gratuits).
+   - **Palier 2 (Basic)** : $\text{MaxAllowedCost} = 10.00\$ / 1\text{M}$ (modèles légers et polyvalents).
+   - **Palier 3 (Standard)** : $\text{MaxAllowedCost} = 15.00\$ / 1\text{M}$ (ex: GPT-4o, OpenAI o1-mini).
+   - **Palier 4 (Pro)** : $\text{MaxAllowedCost} = 20.00\$ / 1\text{M}$ (ex: Claude 3.5 Sonnet).
+   - **Palier 5 (Expert)** : $\text{MaxAllowedCost} = 25.00\$ / 1\text{M}$.
+   - **Palier 6 (Master)** : $\text{MaxAllowedCost} = 30.00\$ / 1\text{M}$.
+   - **Palier 7 (Enterprise)** : $\text{MaxAllowedCost} = 35.00\$ / 1\text{M}$.
 
-3. **Gestion des Clés & Abonnements** :
-   - Clés préfixées `axis_live_...` affichées une seule fois à la création, stockées uniquement sous forme de hash SHA-256.
-   - Fonctions RPC pour générer, rafraîchir et révoquer les clés.
-   - Tâche automatisée (Cron Job) pour désactiver les abonnements expirés ou épuisés.
+3. **Cycle de Vie des 30 Jours & Règle Anti-Abus des 7 Derniers Jours (J-7)** :
+   - **1 clé API = 1 abonnement actif unique** (pas de cumul non contrôlé).
+   - **Durée stricte de 30 jours calendaires**.
+   - **Règle J-7 :**
+     - À plus de 7 jours de l'échéance : tentative de réabonnement rejetée (HTTP 409 `EARLY_RENEWAL_FORBIDDEN`).
+     - Dans les 7 jours avant expiration (ou solde à 0) : souscription autorisée en statut `pending`.
+     - À l'expiration de l'actuel, le pack `pending` s'active **atomiquement** sans aucune interruption de service.
 
-4. **Deux modes de déploiement inclus** :
-   - **Serveur Proxy Node.js / Fastify** : ultra-rapide, streaming SSE natif zéro-latence.
-   - **Supabase Edge Function** : déploiement sans serveur directement dans votre projet Supabase.
+4. **Mode Axis Auto (Routage Intelligent en 2 Étapes)** :
+   - Les modèles sont classés en 4 niveaux de puissance : `low`, `medium`, `high`, `ultra` (raisonnement).
+   - **Étape 1 (Décision) :** Analyse ultra-légère du prompt pour déterminer le niveau d'effort requis.
+   - **Étape 2 (Exécution) :** Routage vers le meilleur modèle disponible correspondant au palier de l'utilisateur ($\le \text{MaxAllowedCost}(P_i)$).
 
 ---
 
-## 🗄️ 1. Déploiement de la Base de Données dans Supabase
+## 🗄️ 1. Déploiement SQL dans Supabase
 
-Les scripts SQL se trouvent dans le dossier `supabase/migrations/` :
-- [001_initial_schema.sql](file:///c:/Users/ThinkPad/Desktop/Axis%20AI%20api/supabase/migrations/001_initial_schema.sql) : Tables `models`, `subscriptions`, `api_keys`, `usage_logs` et toutes les fonctions PL/pgSQL.
-- [002_seed_data.sql](file:///c:/Users/ThinkPad/Desktop/Axis%20AI%20api/supabase/migrations/002_seed_data.sql) : Modèles initiaux (Claude 3.5 Sonnet, GPT-4o, Llama 3.3 Free, Gemini Flash, DeepSeek, etc.) avec leurs tarifs et chaînes de fallback.
+Le script de migration complet est disponible dans :
+- [003_seven_tiers_lifecycle.sql](file:///c:/Users/ThinkPad/Desktop/Axis%20AI%20api/supabase/migrations/003_seven_tiers_lifecycle.sql)
 
 ### Instructions d'installation dans Supabase :
 1. Rendez-vous sur votre tableau de bord Supabase : [https://supabase.com/dashboard/project/oahduqmmqiwdldsqmzhv](https://supabase.com/dashboard/project/oahduqmmqiwdldsqmzhv)
-2. Ouvrez l'onglet **SQL Editor** dans la barre latérale.
-3. Créez une nouvelle requête et copiez-y le contenu de [001_initial_schema.sql](file:///c:/Users/ThinkPad/Desktop/Axis%20AI%20api/supabase/migrations/001_initial_schema.sql), puis cliquez sur **Run**.
-4. Créez une seconde requête avec le contenu de [002_seed_data.sql](file:///c:/Users/ThinkPad/Desktop/Axis%20AI%20api/supabase/migrations/002_seed_data.sql), puis cliquez sur **Run**.
+2. Ouvrez l'onglet **SQL Editor**.
+3. Copiez l'intégralité du contenu de [003_seven_tiers_lifecycle.sql](file:///c:/Users/ThinkPad/Desktop/Axis%20AI%20api/supabase/migrations/003_seven_tiers_lifecycle.sql) et cliquez sur **Run**.
+4. Toutes les tables (`tiers`, `models`, `subscriptions`, `api_keys`, `usage_logs`) et fonctions RPC (`axis_subscribe`, `axis_gatekeeper_validate`, `axis_settle_usage`) sont alors prêtes.
 
 ---
 
-## ⚙️ 2. Configuration & Variables d'Environnement
+## 🧪 2. Journal des Tests & Exécution (`test-results.log`)
 
-Le fichier `.env` est déjà préconfiguré avec vos clés Supabase. Pensez à renseigner votre clé OpenRouter :
+La suite de validation technique complète couvre tous les scénarios critiques :
+- **Formule mathématique des 7 Paliers** ($P_1$ à $P_7$)
+- **Filtrage des modèles** (accès autorisé vs refus HTTP 403 strict)
+- **Cycle de vie 30 jours et expiration automatique** (HTTP 402 `SUBSCRIPTION_EXPIRED`)
+- **Épuisement des tokens / budget** (HTTP 402 `SUBSCRIPTION_DEPLETED`)
+- **Règle anti-abus des 7 jours** (Refus avant J-7, mise en attente `pending`, transition sans couture)
+- **Mode Axis Auto en 2 étapes** (Décision `low`/`medium`/`high`/`ultra` puis Exécution sous plafond)
+- **Test de charge et concurrence** (20 requêtes simultanées avec verrouillage atomique `FOR UPDATE`)
 
-```env
-PORT=3000
-HOST=0.0.0.0
-
-# Votre clé API OpenRouter (https://openrouter.ai/keys)
-OPENROUTER_API_KEY=sk-or-v1-your-key-here
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-
-# Supabase Credentials (Projet: oahduqmmqiwdldsqmzhv)
-SUPABASE_URL=https://oahduqmmqiwdldsqmzhv.supabase.co
-SUPABASE_ANON_KEY=eyJhbGciOi...
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOi...
-
-# Token secret pour le webhook Cron
-CRON_SECRET_TOKEN=axis_cron_secret_key_change_me_987654
-
-DEFAULT_MAX_OUTPUT_TOKENS=1024
-PROXY_TIMEOUT_MS=60000
+Pour lancer la suite et mettre à jour le journal :
+```bash
+npm test
 ```
+
+Consultez le fichier généré à la racine : [test-results.log](file:///c:/Users/ThinkPad/Desktop/Axis%20AI%20api/test-results.log).
 
 ---
 
-## 🚀 3. Démarrage Rapide
+## 🚀 3. Démarrage du Proxy Node.js / Fastify
 
-### A. Lancer la suite de tests automatisée
-```bash
-npm run test-proxy
-```
-*Vérifie le hachage cryptographique, le tokenizer, l'analyse d'intention Axis Auto, les endpoints Fastify et la protection du Cron.*
-
-### B. Créer un abonnement et une clé de démonstration
-Une fois les scripts SQL exécutés dans Supabase, générez votre première clé d'accès avec un solde de 10.00 USD :
-```bash
-npm run generate-key
-```
-La console affichera votre clé secrète en clair (ex: `axis_live_a3f819...`).
-
-### C. Démarrer le serveur proxy
 ```bash
 # Mode développement avec rechargement à chaud
 npm run dev
 
-# Ou mode production
+# Mode production
 npm start
 ```
 
-### D. Synchroniser les tarifs OpenRouter en temps réel (Optionnel)
-Pour mettre à jour automatiquement le catalogue et les tarifs depuis l'API officielle d'OpenRouter :
-```bash
-npm run sync-models
-```
-
 ---
 
-## 📡 4. Utilisation de l'API (Compatible OpenAI)
+## 📡 4. Exemples d'Appels API
 
-Le proxy s'utilise exactement comme l'API standard d'OpenAI. Remplacez simplement `https://api.openai.com/v1` par `http://localhost:3000/v1` (ou l'URL de votre serveur en production) et utilisez votre clé `axis_live_...`.
+### Souscrire à un palier (avec règle J-7)
+```bash
+curl -X POST http://localhost:3000/v1/subscriptions \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "00000000-0000-0000-0000-000000000001", "tier_number": 3}'
+```
 
-### Exemple 1 : Requête avec routage intelligent Axis Auto
+### Requête de Complétion avec Axis Auto
 ```bash
 curl -X POST http://localhost:3000/v1/chat/completions \
-  -H "Authorization: Bearer axis_live_votre_cle_ici" \
+  -H "Authorization: Bearer axis_live_votre_cle" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "axis-auto",
-    "messages": [
-      {"role": "user", "content": "Quelle est la différence entre une architecture microservices et un monolithe modulaire ?"}
-    ]
+    "messages": [{"role": "user", "content": "Rédige une fonction de tri optimisée en TypeScript."}]
   }'
 ```
 
-### Exemple 2 : Requête 100% Gratuite (Modèle Axis Free)
-*Aucun montant n'est débité sur le solde de votre abonnement :*
+### Tentative d'accès à un modèle hors palier (Exemple Palier 1 demandant Claude 3.5 Sonnet)
 ```bash
-curl -X POST http://localhost:3000/v1/chat/completions \
-  -H "Authorization: Bearer axis_live_votre_cle_ici" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "axis-free",
-    "messages": [
-      {"role": "user", "content": "Raconte-moi une blague sur les développeurs."}
-    ]
-  }'
+# Réponse HTTP 403 :
+# {
+#   "error": {
+#     "code": "TIER_MODEL_NOT_PERMITTED",
+#     "message": "Ce modèle n'est pas inclus dans votre palier actuel."
+#   }
+# }
 ```
-
-### Exemple 3 : Streaming en temps réel (SSE)
-```bash
-curl -N -X POST http://localhost:3000/v1/chat/completions \
-  -H "Authorization: Bearer axis_live_votre_cle_ici" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "axis-auto",
-    "stream": true,
-    "messages": [
-      {"role": "user", "content": "Écris un poème sur l intelligence artificielle."}
-    ]
-  }'
-```
-
-### Exemple 4 : Consulter son solde et quota restant
-```bash
-curl -X GET http://localhost:3000/v1/balance \
-  -H "Authorization: Bearer axis_live_votre_cle_ici"
-```
-*Réponse :*
-```json
-{
-  "key": {
-    "id": "e21b...",
-    "prefix": "axis_live_a3f8...",
-    "name": "Test Key Dev",
-    "is_enabled": true,
-    "requests_today": 4
-  },
-  "subscription": {
-    "budget_amount_usd": 10.00,
-    "balance_usd": 9.984210,
-    "expires_at": "2026-11-04T12:00:00Z",
-    "is_active": true
-  }
-}
-```
-
----
-
-## 🔄 5. Automatisation du Nettoyage (Cron Job)
-
-Pour désactiver automatiquement les abonnements expirés ou à solde nul et révoquer l'accès aux clés correspondantes :
-
-### Avec cron-job.org :
-- **URL** : `https://votre-domaine.com/v1/cron/cleanup`
-- **Méthode** : `POST` ou `GET`
-- **Fréquence** : Toutes les heures ou 1 fois par jour
-- **En-têtes HTTP** :
-  ```http
-  x-cron-token: axis_cron_secret_key_change_me_987654
-  ```
-
----
-
-## ⚡ 6. Déploiement en Supabase Edge Function (Optionnel)
-
-Le code Deno autonome est prêt dans [supabase/functions/axis-proxy/index.ts](file:///c:/Users/ThinkPad/Desktop/Axis%20AI%20api/supabase/functions/axis-proxy/index.ts).
-
-Pour le déployer avec le CLI Supabase :
-```bash
-supabase functions deploy axis-proxy --project-ref oahduqmmqiwdldsqmzhv
-supabase secrets set OPENROUTER_API_KEY=sk-or-v1-...
-```
-L'URL d'appel sera alors : `https://oahduqmmqiwdldsqmzhv.supabase.co/functions/v1/axis-proxy`

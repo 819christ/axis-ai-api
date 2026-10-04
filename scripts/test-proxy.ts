@@ -1,5 +1,5 @@
 import { buildServer } from '../src/api/server.js';
-import { resolveTargetModel, estimateTokens, evaluateIntent } from '../src/router/axis-auto.js';
+import { resolveAxisRoute, estimateTokens, decidePowerLevel } from '../src/router/axis-auto.js';
 import { hashApiKey } from '../src/db/supabase.js';
 
 async function runTests() {
@@ -47,37 +47,36 @@ async function runTests() {
   // --------------------------------------------------------------------------
   console.log('\n--- 3. Moteur Axis Auto & Heuristiques ---');
 
-  // Question simple -> Economy
-  const simpleIntent = evaluateIntent([{ role: 'user', content: 'Quelle est la capitale de l\'Espagne ?' }]);
-  assert(simpleIntent.tier === 'economy', `Question simple routée vers tier 'economy' (obtenu: ${simpleIntent.tier})`);
+  // Question simple -> low
+  const simpleIntent = decidePowerLevel([{ role: 'user', content: 'Quelle est la capitale de l\'Espagne ?' }]);
+  assert(simpleIntent.powerLevel === 'low', `Question simple classée 'low' (obtenu: ${simpleIntent.powerLevel})`);
 
-  // Raisonnement / Preuve -> Performance
-  const reasoningIntent = evaluateIntent([{
+  // Raisonnement / Preuve -> ultra
+  const reasoningIntent = decidePowerLevel([{
     role: 'user',
-    content: 'Fournis une preuve mathématique step by step du théorème de Pythagore avec une analyse approfondie.'
+    content: 'Fournis une preuve mathématique step by step du théorème de Pythagore avec une analyse formelle.'
   }]);
-  assert(reasoningIntent.tier === 'performance', `Prompt de raisonnement routé vers tier 'performance' (obtenu: ${reasoningIntent.tier})`);
+  assert(reasoningIntent.powerLevel === 'ultra', `Prompt de raisonnement classé 'ultra' (obtenu: ${reasoningIntent.powerLevel})`);
 
-  // Code complexe -> Performance
-  const codeIntent = evaluateIntent([{
+  // Code complexe -> high
+  const codeIntent = decidePowerLevel([{
     role: 'user',
     content: '```typescript\nfunction solve(matrix: number[][]): boolean {\n  // complex algorithm\n}\n```\nPeux-tu refactoriser et optimiser cet algorithme ?'
   }]);
-  assert(codeIntent.tier === 'performance', `Prompt de code complexe routé vers tier 'performance' (obtenu: ${codeIntent.tier})`);
+  assert(codeIntent.powerLevel === 'high', `Prompt de code complexe classé 'high' (obtenu: ${codeIntent.powerLevel})`);
 
-  // Function calling -> Performance
-  const toolIntent = evaluateIntent(
+  // Function calling -> high
+  const toolIntent = decidePowerLevel(
     [{ role: 'user', content: 'Donne-moi la météo' }],
     [{ type: 'function', function: { name: 'get_weather' } }]
   );
-  assert(toolIntent.tier === 'performance', `Requête avec outils (Tools) routée vers tier 'performance' (obtenu: ${toolIntent.tier})`);
+  assert(toolIntent.powerLevel === 'high', `Requête avec outils (Tools) classée 'high' (obtenu: ${toolIntent.powerLevel})`);
 
   // Routes virtuelles
-  const routeFree = resolveTargetModel('axis-free');
-  assert(routeFree.tier === 'free', 'Modèle axis-free configuré en tier free');
-  assert(routeFree.targetModel.includes(':free'), 'Modèle axis-free pointe vers un modèle gratuit');
+  const routeLow = resolveAxisRoute('axis-low', [], 1);
+  assert(routeLow.powerLevel === 'low', 'Modèle axis-low configuré en power level low');
 
-  const routeAuto = resolveTargetModel('axis-auto', [{ role: 'user', content: 'Salut' }]);
+  const routeAuto = resolveAxisRoute('axis-auto', [{ role: 'user', content: 'Salut' }], 1);
   assert(routeAuto.isVirtualRoute === true, 'axis-auto identifié comme route virtuelle');
   assert(routeAuto.fallbackChain.length > 0, 'La chaîne de secours Fallback est bien configurée');
 
