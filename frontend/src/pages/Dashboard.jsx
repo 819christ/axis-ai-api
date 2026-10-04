@@ -4,7 +4,7 @@ import { useSubscription } from '../hooks/useSubscription';
 import { supabase } from '../supabase';
 import { Modal } from '../components/Modal';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, CheckCircle, Clock, Zap, Shield, Key, ArrowRight, RefreshCw } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Clock, Zap, Shield, Key, ArrowRight, RefreshCw, Sparkles } from 'lucide-react';
 
 export const Dashboard = () => {
   const { profile } = useAuth();
@@ -91,7 +91,20 @@ export const Dashboard = () => {
 
   return (
     <div style={{ maxWidth: 1050, margin: '0 auto' }}>
+      {/* BANNIÈRE VALEUR AJOUTÉE FORTE */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 18px', borderRadius: 12,
+        background: 'linear-gradient(90deg, rgba(132,204,22,0.12) 0%, rgba(192,132,252,0.12) 100%)',
+        border: '1px solid rgba(132,204,22,0.3)', marginBottom: 24
+      }}>
+        <Sparkles size={16} color="var(--axis-accent)" />
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--axis-text)' }}>
+          Axis AI, la toute première plateforme béninoise offrant les modèles d'IA mondiaux à des prix abordables en Francs CFA
+        </span>
+      </div>
+
       {/* Header */}
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28, flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h1 style={{ fontSize: 26, fontWeight: 800 }}>Bonjour, {profile?.pseudo || 'Utilisateur'} 👋</h1>
