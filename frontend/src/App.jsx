@@ -7,6 +7,7 @@ import { AuthPage } from './pages/AuthPage';
 import { Dashboard } from './pages/Dashboard';
 import { ApiKeysPage } from './pages/ApiKeysPage';
 import { SubscriptionsPage } from './pages/SubscriptionsPage';
+import { HistoryPage } from './pages/HistoryPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ModeratorPage } from './pages/ModeratorPage';
 import { AdminPage } from './pages/AdminPage';
@@ -65,6 +66,7 @@ export const App = () => {
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/dashboard/keys" element={<ProtectedRoute><ApiKeysPage /></ProtectedRoute>} />
         <Route path="/dashboard/subscriptions" element={<ProtectedRoute><SubscriptionsPage /></ProtectedRoute>} />
+        <Route path="/dashboard/history"       element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
         <Route path="/dashboard/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
         <Route path="/dashboard/moderator" element={<ProtectedRoute><ModeratorPage /></ProtectedRoute>} />
         <Route path="/dashboard/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />

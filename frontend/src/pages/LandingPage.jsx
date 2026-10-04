@@ -1,15 +1,28 @@
 import { Link } from 'react-router-dom';
 import { AxisLogo } from '../components/AxisLogo';
-import { Code2, Terminal, Briefcase, Globe, Shield, MessageCircle, Zap, Sparkles } from 'lucide-react';
+import { Code2, Terminal, Briefcase, Globe, Shield, MessageCircle, Sparkles } from 'lucide-react';
+
+// Note : aucun prix de modèle, aucun nom de modèle OpenRouter n'est affiché ici
+// conformément à la politique de la plateforme
 
 const TIERS = [
-  { id: 1, name: 'Starter', priceXof: '1 500', priceUsd: 2.50, budgetUsd: 2.50, maxCost: 5.00, desc: 'Modèles gratuits & ultra-légers (Llama 3.3 Free, Gemini Flash Free)' },
-  { id: 2, name: 'Basic', priceXof: '3 000', priceUsd: 5.00, budgetUsd: 5.00, maxCost: 10.00, desc: 'Modèles rapides du quotidien (GPT-4o Mini, Gemini 2.0 Flash, Mistral Small)' },
-  { id: 3, name: 'Standard', priceXof: '6 000', priceUsd: 10.00, budgetUsd: 10.00, maxCost: 15.00, desc: 'Polyvalent & coding (DeepSeek V3, Claude 3 Haiku, Qwen 2.5 Coder)' },
-  { id: 4, name: 'Pro', priceXof: '12 000', priceUsd: 20.00, budgetUsd: 20.00, maxCost: 20.00, desc: 'Modèles de pointe pour développeurs exigeants (Claude 3.5 Sonnet, GPT-4o)', popular: true },
-  { id: 5, name: 'Expert', priceXof: '18 000', priceUsd: 30.00, budgetUsd: 30.00, maxCost: 25.00, desc: 'Haute performance et contexte étendu pour applications intensives' },
-  { id: 6, name: 'Master', priceXof: '24 000', priceUsd: 40.00, budgetUsd: 40.00, maxCost: 30.00, desc: 'Modèles de raisonnement avancé et logique lourde (DeepSeek R1, OpenAI o1-mini)' },
-  { id: 7, name: 'Enterprise', priceXof: '30 000', priceUsd: 50.00, budgetUsd: 50.00, maxCost: 35.00, desc: 'Accès illimité sans restriction aux plus gros modèles mondiaux' },
+  { id: 1, name: 'Starter',    priceXof: '1 500',  priceUsd: 2.50,  popular: false },
+  { id: 2, name: 'Basic',      priceXof: '3 000',  priceUsd: 5.00,  popular: false },
+  { id: 3, name: 'Standard',   priceXof: '6 000',  priceUsd: 10.00, popular: false },
+  { id: 4, name: 'Pro',        priceXof: '12 000', priceUsd: 20.00, popular: true  },
+  { id: 5, name: 'Expert',     priceXof: '18 000', priceUsd: 30.00, popular: false },
+  { id: 6, name: 'Master',     priceXof: '24 000', priceUsd: 40.00, popular: false },
+  { id: 7, name: 'Enterprise', priceXof: '30 000', priceUsd: 50.00, popular: false },
+];
+
+const TIER_DESCS = [
+  "Idéal pour découvrir la plateforme avec des modèles d'IA accessibles.",
+  "Pour un usage quotidien léger : rédaction, résumé, assistance.",
+  "Polyvalent — coding, analyse, traduction et rédaction avancée.",
+  "Le choix des développeurs exigeants pour des projets professionnels.",
+  "Applications intensives avec contexte long et haute précision.",
+  "Raisonnement complexe, logique avancée et tâches multi-étapes lourdes.",
+  "Accès complet sans restriction aux plus puissants modèles mondiaux.",
 ];
 
 export const LandingPage = () => {
@@ -19,7 +32,7 @@ export const LandingPage = () => {
       <header style={{ padding: '18px 40px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--axis-border)', backdropFilter: 'blur(10px)', position: 'sticky', top: 0, zIndex: 50, background: 'rgba(19,19,20,0.85)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <AxisLogo size={28} />
-          <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em', color: 'var(--axis-text)' }}>Axis AI</span>
+          <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em' }}>Axis AI</span>
           <span className="badge badge-green" style={{ fontSize: 10 }}>BÉNIN / UEMOA</span>
         </div>
         <div style={{ display: 'flex', gap: 14 }}>
@@ -28,57 +41,53 @@ export const LandingPage = () => {
         </div>
       </header>
 
-      {/* Hero Section */}
-      <main style={{ flex: 1, padding: '50px 20px 80px', textAlign: 'center', maxWidth: 1240, margin: '0 auto', width: '100%' }}>
-        {/* BANNIÈRE VALEUR AJOUTÉE FORTE */}
-        <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: 10, padding: '10px 22px', borderRadius: 999,
-          background: 'linear-gradient(90deg, rgba(132,204,22,0.15) 0%, rgba(192,132,252,0.15) 100%)',
-          border: '1px solid rgba(132,204,22,0.4)', marginBottom: 28, maxWidth: '90%'
-        }}>
-          <Sparkles size={16} color="var(--axis-accent)" />
-          <span style={{ fontSize: 'clamp(12px, 2vw, 14px)', fontWeight: 700, color: 'var(--axis-text)' }}>
-            Axis AI, la toute première plateforme béninoise offrant les modèles d'IA mondiaux à des prix abordables en Francs CFA
-          </span>
+      <main style={{ flex: 1, padding: '50px 20px 80px', maxWidth: 1240, margin: '0 auto', width: '100%' }}>
+        {/* Bannière nationale */}
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 28 }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, padding: '10px 22px', borderRadius: 999, background: 'linear-gradient(90deg, rgba(132,204,22,0.15) 0%, rgba(192,132,252,0.15) 100%)', border: '1px solid rgba(132,204,22,0.4)' }}>
+            <Sparkles size={15} color="var(--axis-accent)" />
+            <span style={{ fontSize: 13, fontWeight: 700, textAlign: 'center' }}>
+              Axis AI, la toute première plateforme béninoise offrant les modèles d'IA mondiaux à des prix abordables en Francs CFA
+            </span>
+          </div>
         </div>
 
-        <div style={{ marginBottom: 70 }} className="ax-fade-in">
-          <div style={{ margin: '0 auto 20px', display: 'flex', justifyContent: 'center' }}>
+        {/* Hero */}
+        <div style={{ textAlign: 'center', marginBottom: 80 }} className="ax-fade-in">
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
             <AxisLogo size={76} className="ax-pulse-glow" />
           </div>
-
           <h1 style={{ fontSize: 'clamp(34px, 5vw, 54px)', fontWeight: 800, marginBottom: 18, letterSpacing: '-0.03em', lineHeight: 1.15 }}>
             La passerelle d'API IA unifiée en Francs CFA
           </h1>
           <p style={{ fontSize: 'clamp(15px, 2vw, 19px)', color: 'var(--axis-textMuted)', maxWidth: 740, margin: '0 auto 34px', lineHeight: 1.6 }}>
-            Accédez à Claude 3.5 Sonnet, GPT-4o, DeepSeek R1, Llama 3.3 et Gemini via <b>une seule clé API standard</b>. Payez simplement par Mobile Money (MTN / Moov) dès <b>1 500 FCFA</b>.
+            Une seule clé API standard pour accéder à tous les grands modèles d'IA du marché.<br />
+            Payez simplement par <b>Mobile Money (MTN / Moov)</b> dès <b>1 500 FCFA</b>.
           </p>
-
           <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link to="/auth" className="btn-primary" style={{ padding: '14px 32px', fontSize: 16 }}>
               Créer une clé API gratuitement
             </Link>
             <a href="#tarifs" className="btn-ghost" style={{ padding: '14px 28px', fontSize: 16 }}>
-              Voir les 7 Paliers (1 500 à 30 000 FCFA)
+              Voir les 7 Forfaits
             </a>
           </div>
         </div>
 
-        {/* Section Intégration IDE */}
+        {/* Section Compatibilité IDE */}
         <section style={{ marginBottom: 100 }}>
-          <h2 style={{ fontSize: 26, fontWeight: 800, marginBottom: 10 }}>Compatible immédiatement avec tous vos IDE</h2>
-          <p style={{ color: 'var(--axis-textMuted)', marginBottom: 36, fontSize: 14 }}>
-            Une seule clé API standard OpenAI — insérez-la dans Cursor, Claude Code, Windsurf ou vos applications web.
-          </p>
-          
+          <div style={{ textAlign: 'center', marginBottom: 36 }}>
+            <h2 style={{ fontSize: 26, fontWeight: 800, marginBottom: 8 }}>Compatible avec tous vos outils de développement</h2>
+            <p style={{ color: 'var(--axis-textMuted)', fontSize: 14 }}>Une clé API standard — prête à l'emploi dans Cursor, Claude Code, VS Code ou vos scripts.</p>
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20 }}>
             {[
-              { icon: Terminal, title: 'Claude Code', desc: 'L’agent CLI d’Anthropic avec support Axis Proxy' },
-              { icon: Code2, title: 'Cursor & Windsurf', desc: 'Autocomplétion & chat en direct avec les modèles autorisés' },
-              { icon: Briefcase, title: 'VS Code & Continue', desc: 'Routage automatique selon la complexité du prompt' },
-              { icon: Globe, title: 'Web, Mobile & Scripts', desc: 'Compatible avec le SDK OpenAI standard (Python, TS, cURL)' },
+              { icon: Terminal,  title: 'Claude Code',        desc: "L'agent CLI d'Anthropic avec support Axis Proxy" },
+              { icon: Code2,     title: 'Cursor & Windsurf',  desc: "Autocomplétion et chat en direct avec les IA" },
+              { icon: Briefcase, title: "VS Code & Continue", desc: "Extension IA native dans votre éditeur favori" },
+              { icon: Globe,     title: 'Web & Scripts',       desc: "Compatible SDK OpenAI standard (Python, TS, cURL)" },
             ].map((tool, i) => (
-              <div key={i} className="card card-hover" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', textAlign: 'left', gap: 12 }}>
+              <div key={i} className="card card-hover" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 12 }}>
                 <div style={{ width: 42, height: 42, borderRadius: 10, background: 'var(--axis-accent-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <tool.icon size={20} color="var(--axis-accent)" />
                 </div>
@@ -89,18 +98,18 @@ export const LandingPage = () => {
           </div>
         </section>
 
-        {/* Section Tarifs 7 Paliers XOF (1 500 à 30 000 FCFA) */}
+        {/* Section Tarifs — SANS prix de modèles ni noms OpenRouter */}
         <section id="tarifs" style={{ marginBottom: 100 }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 14px', borderRadius: 999, background: 'rgba(255,255,255,0.05)', marginBottom: 12 }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--axis-accent)' }}>7 PALIERS DE 1 500 XOF À 30 000 XOF</span>
+          <div style={{ textAlign: 'center', marginBottom: 44 }}>
+            <span className="badge badge-green" style={{ marginBottom: 12 }}>7 FORFAITS DE 1 500 XOF À 30 000 XOF</span>
+            <h2 style={{ fontSize: 32, fontWeight: 800, marginBottom: 10 }}>Tarification Transparente en Francs CFA (XOF)</h2>
+            <p style={{ color: 'var(--axis-textMuted)', fontSize: 14, maxWidth: 680, margin: '0 auto' }}>
+              Des forfaits pensés pour le marché béninois et la sous-région, avec validation instantanée par Mobile Money ou modérateur local.
+            </p>
           </div>
-          <h2 style={{ fontSize: 32, fontWeight: 800, marginBottom: 10 }}>Tarification Transparente en Francs CFA (XOF)</h2>
-          <p style={{ color: 'var(--axis-textMuted)', marginBottom: 40, fontSize: 14, maxWidth: 700, margin: '0 auto 40px' }}>
-            Des forfaits pensés pour le marché béninois et la sous-région, avec validation instantanée par Mobile Money ou modérateur local.
-          </p>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 18, textAlign: 'left' }}>
-            {TIERS.map(tier => (
+            {TIERS.map((tier, i) => (
               <div key={tier.id} className="card card-hover" style={{
                 border: tier.popular ? '2px solid var(--axis-accent)' : '1px solid var(--axis-border)',
                 position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
@@ -111,40 +120,28 @@ export const LandingPage = () => {
                     POPULAIRE
                   </span>
                 )}
+
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
                     <h3 style={{ fontSize: 19, fontWeight: 700 }}>Palier {tier.id}</h3>
                     <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--axis-accent)' }}>{tier.name}</span>
                   </div>
 
-                  {/* Prix XOF mis en avant */}
-                  <div style={{ fontSize: 32, fontWeight: 900, color: 'var(--axis-text)', marginTop: 4 }}>
+                  {/* Prix en XOF au premier plan */}
+                  <div style={{ fontSize: 30, fontWeight: 900, marginTop: 4 }}>
                     {tier.priceXof} <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--axis-accent)' }}>FCFA</span>
                   </div>
-                  <div style={{ color: 'var(--axis-textMuted)', fontSize: 12, marginBottom: 16 }}>
-                    ≈ ${tier.priceUsd.toFixed(2)} USD / 30 jours
+                  <div style={{ color: 'var(--axis-textMuted)', fontSize: 12, marginBottom: 18 }}>
+                    Durée : 30 jours
                   </div>
 
-                  <p style={{ fontSize: 12, color: 'var(--axis-textMuted)', marginBottom: 18, minHeight: 34, lineHeight: 1.4 }}>{tier.desc}</p>
-
-                  <div style={{ borderTop: '1px solid var(--axis-border)', paddingTop: 12, marginBottom: 20, display: 'flex', flexDirection: 'column', gap: 7, fontSize: 12 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ color: 'var(--axis-textMuted)' }}>Budget alloué :</span>
-                      <b>${tier.budgetUsd.toFixed(2)} USD</b>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ color: 'var(--axis-textMuted)' }}>Plafond modèle :</span>
-                      <b style={{ color: 'var(--axis-accent)' }}>≤ ${tier.maxCost.toFixed(2)} / 1M</b>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ color: 'var(--axis-textMuted)' }}>Durée de vie :</span>
-                      <span>30 jours stricts</span>
-                    </div>
-                  </div>
+                  <p style={{ fontSize: 12.5, color: 'var(--axis-textMuted)', lineHeight: 1.5, marginBottom: 22, minHeight: 40 }}>
+                    {TIER_DESCS[i]}
+                  </p>
                 </div>
 
                 <Link to="/auth" className={tier.popular ? "btn-primary" : "btn-ghost"} style={{ width: '100%', textAlign: 'center', justifyContent: 'center' }}>
-                  Choisir ce palier
+                  Choisir ce forfait
                 </Link>
               </div>
             ))}
@@ -152,32 +149,30 @@ export const LandingPage = () => {
         </section>
 
         {/* Section Paiement Local */}
-        <section style={{ padding: '36px 32px', borderRadius: 20, border: '1px solid var(--axis-border)', background: 'linear-gradient(135deg, rgba(30,31,32,0.9) 0%, rgba(19,19,20,0.95) 100%)', textAlign: 'left' }}>
+        <section style={{ padding: '36px 32px', borderRadius: 20, border: '1px solid var(--axis-border)', background: 'linear-gradient(135deg, rgba(30,31,32,0.9) 0%, rgba(19,19,20,0.95) 100%)' }}>
           <div style={{ maxWidth: 900, margin: '0 auto' }}>
             <h2 style={{ fontSize: 24, fontWeight: 800, marginBottom: 10 }}>Paiement Local & Validation Instantanée</h2>
             <p style={{ color: 'var(--axis-textMuted)', fontSize: 13, marginBottom: 28 }}>
-              Réglez en Francs CFA via Mobile Money et activez votre clé API en quelques instants :
+              Réglez en Francs CFA via Mobile Money et activez votre accès en quelques instants :
             </p>
-
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
-              <div style={{ padding: 18, borderRadius: 12, background: 'var(--axis-bg)', border: '1px solid var(--axis-border)' }}>
+              <div style={{ padding: 20, borderRadius: 12, background: 'var(--axis-bg)', border: '1px solid var(--axis-border)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                   <MessageCircle size={20} color="#25D366" />
-                  <h3 style={{ fontSize: 15, fontWeight: 700 }}>Option A : Contact Direct Admin (WhatsApp)</h3>
+                  <h3 style={{ fontSize: 15, fontWeight: 700 }}>Option A : Contact WhatsApp Admin</h3>
                 </div>
                 <p style={{ fontSize: 12.5, color: 'var(--axis-textMuted)', lineHeight: 1.5, marginBottom: 12 }}>
-                  Virement Mobile Money officiel (MTN / Moov Bénin). Envoyez votre capture d'écran sur WhatsApp pour validation sous 24h.
+                  Envoyez votre virement Mobile Money (MTN / Moov Bénin) et transmettez la capture WhatsApp. Validation sous <b>24h</b>.
                 </p>
                 <span className="badge badge-green">MTN & Moov Bénin</span>
               </div>
-
-              <div style={{ padding: 18, borderRadius: 12, background: 'var(--axis-bg)', border: '1px solid var(--axis-border)' }}>
+              <div style={{ padding: 20, borderRadius: 12, background: 'var(--axis-bg)', border: '1px solid var(--axis-border)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                   <Shield size={20} color="var(--axis-purple)" />
-                  <h3 style={{ fontSize: 15, fontWeight: 700 }}>Option B : Agent Modérateur (Code MOD-XXXX)</h3>
+                  <h3 style={{ fontSize: 15, fontWeight: 700 }}>Option B : Agent Modérateur (MOD-XXXX)</h3>
                 </div>
                 <p style={{ fontSize: 12.5, color: 'var(--axis-textMuted)', lineHeight: 1.5, marginBottom: 12 }}>
-                  Saisissez l'identifiant du modérateur de proximité qui vous accompagne. Dès qu'il valide votre reçu, votre clé s'active instantanément.
+                  Vous avez un modérateur de proximité ? Il encaisse et valide directement — <b>activation immédiate</b>.
                 </p>
                 <span className="badge badge-purple">Activation Immédiate</span>
               </div>
@@ -193,9 +188,9 @@ export const LandingPage = () => {
           <span>Axis AI © 2025 · Première passerelle IA béninoise en Francs CFA</span>
         </div>
         <div style={{ display: 'flex', gap: 20, fontSize: 12 }}>
-          <span>PostgreSQL RPC</span>
           <span>1 500 à 30 000 XOF</span>
           <span>Mobile Money</span>
+          <span>30 jours</span>
         </div>
       </footer>
     </div>

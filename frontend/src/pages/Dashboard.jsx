@@ -10,16 +10,15 @@ export const Dashboard = () => {
   const { profile } = useAuth();
   const { subscription, loading, refresh } = useSubscription();
   const [alert, setAlert] = useState(null);
-  const [history, setHistory] = useState([]);
   const [usage, setUsage] = useState([]);
 
   useEffect(() => {
     if (profile) {
       checkAlert();
       fetchUsage();
-      fetchSubscriptionHistory();
     }
   }, [profile]);
+
 
   const checkAlert = async () => {
     try {
@@ -39,14 +38,7 @@ export const Dashboard = () => {
     }
   };
 
-  const fetchSubscriptionHistory = async () => {
-    try {
-      const { data } = await supabase.from('subscriptions').select('*').eq('user_id', profile.id).order('created_at', { ascending: false });
-      if (data) setHistory(data);
-    } catch (e) {
-      console.error(e);
-    }
-  };
+
 
   const isExpired = subscription && new Date(subscription.expires_at) < new Date();
   const isDepleted = subscription && subscription.balance_usd <= 0;
@@ -239,61 +231,17 @@ export const Dashboard = () => {
         </div>
       </div>
 
-      {/* Subscriptions History Table */}
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--axis-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 style={{ fontSize: 16, fontWeight: 700 }}>Historique des Abonnements & Paiements</h2>
-          <span style={{ fontSize: 12, color: 'var(--axis-muted)' }}>{history.length} souscription(s)</span>
+      {/* Lien vers la page Historique dédiée */}
+      <div className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 22px' }}>
+        <div>
+          <h2 style={{ fontSize: 15, fontWeight: 700, marginBottom: 2 }}>Historique des Abonnements & Paiements</h2>
+          <p style={{ fontSize: 12, color: 'var(--axis-textMuted)', margin: 0 }}>Retrouvez toutes vos souscriptions et liez un code modérateur à vos demandes en attente.</p>
         </div>
-
-        <div style={{ overflowX: 'auto' }}>
-          <table className="ax-table">
-            <thead>
-              <tr>
-                <th>Palier</th>
-                <th>Budget</th>
-                <th>Solde</th>
-                <th>Statut</th>
-                <th>Validé par</th>
-                <th>Dates</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.map(sub => (
-                <tr key={sub.id}>
-                  <td><b>Palier {sub.tier_number}</b></td>
-                  <td>${Number(sub.budget_amount_usd).toFixed(2)}</td>
-                  <td>${Number(sub.balance_usd).toFixed(2)}</td>
-                  <td>
-                    <span className={`badge ${sub.status === 'active' ? 'badge-green' : sub.status === 'pending_validation' ? 'badge-yellow' : sub.status === 'pending' ? 'badge-purple' : 'badge-gray'}`}>
-                      {sub.status}
-                    </span>
-                  </td>
-                  <td>
-                    {sub.moderator_code_used ? (
-                      <span style={{ fontFamily: 'monospace', color: 'var(--axis-purple)' }}>{sub.moderator_code_used}</span>
-                    ) : sub.validated_by ? (
-                      <span>Admin</span>
-                    ) : (
-                      <span style={{ color: 'var(--axis-muted)' }}>En attente</span>
-                    )}
-                  </td>
-                  <td style={{ fontSize: 11, color: 'var(--axis-muted)' }}>
-                    Du {new Date(sub.starts_at).toLocaleDateString()} au {new Date(sub.expires_at).toLocaleDateString()}
-                  </td>
-                </tr>
-              ))}
-              {history.length === 0 && (
-                <tr>
-                  <td colSpan="6" style={{ padding: 24, textAlign: 'center', color: 'var(--axis-muted)' }}>
-                    Aucun historique d'abonnement.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <Link to="/dashboard/history" className="btn-ghost" style={{ fontSize: 13, padding: '8px 18px', flexShrink: 0 }}>
+          Voir l'historique <ArrowRight size={14} />
+        </Link>
       </div>
+
 
       {/* Mandatory Admin Suspension Modal */}
       <Modal isOpen={!!alert} isDanger title="⚠️ Suspension Administrative">

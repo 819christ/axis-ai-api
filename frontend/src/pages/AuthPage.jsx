@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../components/Toast';
 import { AxisLogo } from '../components/AxisLogo';
@@ -60,6 +61,25 @@ export const AuthPage = () => {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} className="ax-hex-bg">
       <div className="card ax-fade-in" style={{ width: '100%', maxWidth: 420, padding: 32 }}>
+        <Link
+          to="/"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            color: 'var(--axis-muted)',
+            fontSize: 13,
+            textDecoration: 'none',
+            marginBottom: 16,
+            transition: 'color 0.15s ease'
+          }}
+          onMouseEnter={e => e.currentTarget.style.color = 'var(--axis-accent)'}
+          onMouseLeave={e => e.currentTarget.style.color = 'var(--axis-muted)'}
+        >
+          <ArrowLeft size={16} />
+          Retour à l'accueil
+        </Link>
+
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 14 }}>
             <AxisLogo size={48} className="ax-pulse-glow" />

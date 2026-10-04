@@ -1,6 +1,6 @@
 ================================================================================
   AXIS AUTO / ACCESS AI - JOURNAL D'EXÉCUTION DES TESTS (TEST LOG)
-  Date d'exécution : 2026-10-04T13:59:17.518Z
+  Date d'exécution : 2026-10-04T14:21:51.954Z
   Environnement : Node.js v22.17.0 / Fastify / PostgreSQL Supabase RPC
 ================================================================================
 [SUCCESS] TEST: Sécurité : Seul l'administrateur peut créer un modérateur
@@ -13,7 +13,7 @@
 --------------------------------------------------------------------------------
 [SUCCESS] TEST: Souscription client avec code modérateur (Statut: pending_validation)
   Objectif : Créer l'abonnement en attente de validation hors-ligne après paiement.
-  Détails  : Abonnement créé (ID: 8d5eb48e-2870-4562-bfdf-e144856cbf21) avec assignation modérateur MOD-7777.
+  Détails  : Abonnement créé (ID: b0f7994f-0238-40bf-90f8-6b7b1cdf119e) avec assignation modérateur MOD-7777.
 --------------------------------------------------------------------------------
 [SUCCESS] TEST: Validation de l'abonnement par le modérateur après paiement
   Objectif : Activer le pack pour 30 jours suite à la vérification du modérateur.
