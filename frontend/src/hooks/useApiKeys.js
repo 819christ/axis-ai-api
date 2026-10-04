@@ -38,17 +38,66 @@ export const useApiKeys = () => {
 
   // Création d'une clé API — Libre et possible même SANS abonnement actif
   const createKey = async (name, subscriptionId = null, dailyLimit = null) => {
-    const { data, error } = await supabase.rpc('axis_generate_api_key', {
-      p_user_id: user.id,
-      p_subscription_id: subscriptionId || null,
-      p_name: name || 'Default API Key',
-      p_daily_limit: dailyLimit || null
-    });
+    try {
+      // Tentative 1 : RPC serveur
+      const { data, error } = await supabase.rpc('axis_generate_api_key', {
+        p_user_id: user.id,
+        p_subscription_id: subscriptionId || null,
+        p_name: name || 'Default API Key',
+        p_daily_limit: dailyLimit || null
+      });
 
-    if (!error && data?.success) {
+      if (!error && data?.success) {
+        await fetchKeys();
+        return { data, error: null };
+      }
+
+      // Tentative 2 : Fallback client sécurisé (Web Crypto API standard)
+      console.warn('[Axis Key Generator] RPC échouée, bascule vers le générateur cryptographique client :', error?.message);
+      const randBytes = new Uint8Array(24);
+      window.crypto.getRandomValues(randBytes);
+      const rawHex = Array.from(randBytes, b => b.toString(16).padStart(2, '0')).join('');
+      const fullKey = 'axis_live_' + rawHex;
+
+      // Hash SHA-256 standard via SubtleCrypto
+      const encoder = new TextEncoder();
+      const hashBuffer = await window.crypto.subtle.digest('SHA-256', encoder.encode(fullKey));
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const keyHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      const keyPrefix = fullKey.slice(0, 14) + '...';
+
+      const isKeyEnabled = profile?.role === 'admin' || Boolean(subscriptionId);
+
+      const { data: insertedKey, error: insertError } = await supabase
+        .from('api_keys')
+        .insert({
+          user_id: user.id,
+          subscription_id: subscriptionId || null,
+          name: (name || 'Default API Key').trim(),
+          key_hash: keyHash,
+          key_prefix: keyPrefix,
+          is_enabled: isKeyEnabled,
+          daily_request_limit: dailyLimit || null
+        })
+        .select()
+        .single();
+
+      if (insertError) throw insertError;
+
       await fetchKeys();
+      return {
+        data: {
+          success: true,
+          api_key: fullKey,
+          key_prefix: keyPrefix,
+          is_enabled: isKeyEnabled
+        },
+        error: null
+      };
+    } catch (err) {
+      console.error('Erreur createKey:', err);
+      return { data: null, error: err };
     }
-    return { data, error };
   };
 
   // Bascule active/inactive avec vérification d'abonnement

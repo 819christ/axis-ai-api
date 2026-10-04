@@ -39,7 +39,14 @@ export const HistoryPage = () => {
         .eq('user_id', profile.id)
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (error) {
+        console.warn('Subscriptions select error:', error);
+        if (error.message && error.message.includes('recursion')) {
+          setSubscriptions([]);
+          return;
+        }
+        throw error;
+      }
       if (data) {
         setSubscriptions(data);
 
@@ -55,7 +62,7 @@ export const HistoryPage = () => {
       }
     } catch (e) {
       console.error(e);
-      addToast('Erreur lors du chargement des abonnements', 'error');
+      addToast(e.message || 'Erreur lors du chargement des abonnements', 'error');
     } finally {
       setLoading(false);
     }

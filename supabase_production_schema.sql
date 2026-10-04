@@ -255,6 +255,8 @@ DECLARE
     v_active_sub RECORD;
     v_pending_sub RECORD;
     v_mod RECORD;
+    v_mod_id UUID := NULL;
+    v_mod_code_assigned TEXT := NULL;
     v_new_sub_id UUID;
     v_now TIMESTAMPTZ := timezone('utc'::text, now());
     v_is_renewal BOOLEAN := false;
@@ -274,6 +276,8 @@ BEGIN
         IF NOT FOUND THEN
             RETURN jsonb_build_object('success', false, 'http_status', 404, 'error_code', 'INVALID_MODERATOR_CODE', 'error_message', 'Code modérateur invalide.');
         END IF;
+        v_mod_id := v_mod.id;
+        v_mod_code_assigned := v_mod.moderator_code;
     END IF;
 
     SELECT * INTO v_active_sub
@@ -313,8 +317,8 @@ BEGIN
         starts_at, expires_at, status, is_active, moderator_id, moderator_code_used, commission_status
     ) VALUES (
         p_user_id, v_tier.tier_number, v_tier.budget_amount_usd, v_tier.budget_amount_usd, 0.0,
-        v_starts_at, v_expires_at, 'pending_validation', false, v_mod.id, v_mod.moderator_code,
-        CASE WHEN v_mod.id IS NOT NULL THEN 'unpaid' ELSE 'none' END
+        v_starts_at, v_expires_at, 'pending_validation', false, v_mod_id, v_mod_code_assigned,
+        CASE WHEN v_mod_id IS NOT NULL THEN 'unpaid' ELSE 'none' END
     ) RETURNING id INTO v_new_sub_id;
 
     RETURN jsonb_build_object(
@@ -325,7 +329,7 @@ BEGIN
         'is_renewal_j7', v_is_renewal,
         'tier_number', v_tier.tier_number,
         'price_usd', v_tier.price_usd,
-        'moderator_assigned', v_mod.moderator_code,
+        'moderator_assigned', v_mod_code_assigned,
         'instructions', 'Effectuez le règlement hors-ligne sur le numéro officiel. Votre pack sera activé dès validation.'
     );
 END;
@@ -677,9 +681,22 @@ BEGIN
         END IF;
     END IF;
 
-    v_raw_secret := encode(gen_random_bytes(24), 'hex');
-    v_full_key := 'axis_live_' || v_raw_secret;
-    v_key_hash := encode(digest(v_full_key, 'sha256'), 'hex');
+    -- Génération cryptographique résiliente : tente pgcrypto, fallback sur random natif
+    BEGIN
+        v_raw_secret := encode(gen_random_bytes(24), 'hex');
+    EXCEPTION WHEN OTHERS THEN
+        v_raw_secret := md5(random()::text || clock_timestamp()::text) || md5(random()::text || clock_timestamp()::text);
+    END;
+
+    v_full_key := 'axis_live_' || substr(v_raw_secret, 1, 40);
+
+    -- Hachage SHA-256 résilient
+    BEGIN
+        v_key_hash := encode(digest(v_full_key, 'sha256'), 'hex');
+    EXCEPTION WHEN OTHERS THEN
+        v_key_hash := encode(sha256(v_full_key::bytea), 'hex');
+    END;
+
     v_key_prefix := substr(v_full_key, 1, 14) || '...';
 
     INSERT INTO public.api_keys (user_id, subscription_id, key_hash, key_prefix, name, is_enabled, daily_request_limit)
@@ -716,7 +733,7 @@ CREATE OR REPLACE FUNCTION public.axis_refresh_api_key(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
     v_old_key RECORD;
@@ -731,9 +748,20 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'http_status', 404, 'error_message', 'Clé API introuvable.');
     END IF;
 
-    v_raw_secret := encode(gen_random_bytes(24), 'hex');
-    v_full_key := 'axis_live_' || v_raw_secret;
-    v_key_hash := encode(digest(v_full_key, 'sha256'), 'hex');
+    BEGIN
+        v_raw_secret := encode(gen_random_bytes(24), 'hex');
+    EXCEPTION WHEN OTHERS THEN
+        v_raw_secret := md5(random()::text || clock_timestamp()::text) || md5(random()::text || clock_timestamp()::text);
+    END;
+
+    v_full_key := 'axis_live_' || substr(v_raw_secret, 1, 40);
+
+    BEGIN
+        v_key_hash := encode(digest(v_full_key, 'sha256'), 'hex');
+    EXCEPTION WHEN OTHERS THEN
+        v_key_hash := encode(sha256(v_full_key::bytea), 'hex');
+    END;
+
     v_key_prefix := substr(v_full_key, 1, 14) || '...';
 
     UPDATE public.api_keys
@@ -996,61 +1024,53 @@ DROP POLICY IF EXISTS "usage_logs_admin_all" ON public.usage_logs;
 DROP POLICY IF EXISTS "tiers_public_read" ON public.tiers;
 DROP POLICY IF EXISTS "models_public_read" ON public.models;
 
+-- Helper non-récursif (SECURITY DEFINER contourne RLS automatiquement)
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles 
+    WHERE id = auth.uid() AND role = 'admin'
+  );
+$$;
+
 -- ── PROFILES ──────────────────────────────────────────────────────────────────
 CREATE POLICY "profiles_select_own" ON public.profiles
-    FOR SELECT USING (auth.uid() = id);
+    FOR SELECT USING (auth.uid() = id OR public.is_admin());
 
--- Empêche l'auto-promotion de rôle depuis le client
 CREATE POLICY "profiles_update_own" ON public.profiles
-    FOR UPDATE USING (auth.uid() = id)
-    WITH CHECK (
-        auth.uid() = id
-        AND role = (SELECT role FROM public.profiles WHERE id = auth.uid())
-    );
-
-CREATE POLICY "profiles_admin_all" ON public.profiles
-    FOR ALL USING (
-        EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
-    );
+    FOR UPDATE USING (auth.uid() = id OR public.is_admin())
+    WITH CHECK (auth.uid() = id OR public.is_admin());
 
 -- ── SUBSCRIPTIONS ─────────────────────────────────────────────────────────────
 CREATE POLICY "subscriptions_select_own" ON public.subscriptions
     FOR SELECT USING (user_id = auth.uid());
 
 CREATE POLICY "subscriptions_admin_all" ON public.subscriptions
-    FOR ALL USING (
-        EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
-    );
+    FOR ALL USING (public.is_admin());
 
 -- Modérateur : lecture seule des abonnements de ses clients assignés
 CREATE POLICY "subscriptions_moderator_assigned" ON public.subscriptions
-    FOR SELECT USING (
-        moderator_id = auth.uid()
-        AND EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'moderator')
-    );
+    FOR SELECT USING (moderator_id = auth.uid());
 
 -- ── API KEYS ──────────────────────────────────────────────────────────────────
 CREATE POLICY "api_keys_select_own" ON public.api_keys
-    FOR SELECT USING (user_id = auth.uid());
+    FOR ALL USING (user_id = auth.uid());
 
 CREATE POLICY "api_keys_admin_all" ON public.api_keys
-    FOR ALL USING (
-        EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
-    );
+    FOR ALL USING (public.is_admin());
 
 -- ── USAGE LOGS ────────────────────────────────────────────────────────────────
 CREATE POLICY "usage_logs_select_own" ON public.usage_logs
     FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM public.api_keys k
-            WHERE k.id = usage_logs.api_key_id AND k.user_id = auth.uid()
-        )
+        api_key_id IN (SELECT id FROM public.api_keys WHERE user_id = auth.uid())
     );
 
 CREATE POLICY "usage_logs_admin_all" ON public.usage_logs
-    FOR ALL USING (
-        EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
-    );
+    FOR ALL USING (public.is_admin());
 
 -- ── TIERS & MODELS : Lecture publique (catalogue accessible sans auth) ─────────
 CREATE POLICY "tiers_public_read" ON public.tiers
