@@ -6,6 +6,8 @@ import { balanceRoutes } from './routes/balance.js';
 import { keysRoutes } from './routes/keys.js';
 import { cronRoutes } from './routes/cron.js';
 import { subscriptionsRoutes } from './routes/subscriptions.js';
+import { adminRoutes } from './routes/admin.js';
+
 
 export function buildServer() {
   const server = Fastify({
@@ -38,6 +40,8 @@ export function buildServer() {
   server.register(keysRoutes, { prefix: '/v1' });
   server.register(cronRoutes, { prefix: '/v1' });
   server.register(subscriptionsRoutes, { prefix: '/v1' });
+  server.register(adminRoutes, { prefix: '/v1' });
+
 
   // Alias pour les requêtes racine (certains clients OpenAI envoient directement sur /chat/completions)
   server.register(chatRoutes);

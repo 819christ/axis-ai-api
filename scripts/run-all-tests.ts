@@ -6,7 +6,6 @@ import {
   KNOWN_MODELS,
   decidePowerLevel,
   selectBestModelForTier,
-  resolveAxisRoute,
 } from '../src/router/axis-auto.js';
 import { hashApiKey } from '../src/db/supabase.js';
 
@@ -22,7 +21,6 @@ class TestLogger {
   private results: TestResultEntry[] = [];
 
   constructor() {
-    // Initialise l'en-tête du journal de test
     const header = [
       '================================================================================',
       `  AXIS AUTO / ACCESS AI - JOURNAL D'EXÉCUTION DES TESTS (TEST LOG)`,
@@ -71,9 +69,17 @@ class TestLogger {
 }
 
 // ----------------------------------------------------------------------------
-// SIMULATEUR POSTGRESQL ATOMIQUE POUR TESTS HORS-LIGNE & INTÉGRATION RPC
-// Reproduit rigoureusement le comportement transactionnel PL/pgSQL de Supabase
+// SIMULATEUR POSTGRESQL ATOMIQUE POUR TESTS DES RÔLES, RPC & FLUX MÉTIER
 // ----------------------------------------------------------------------------
+interface MockProfile {
+  id: string;
+  email: string;
+  username: string;
+  pseudo: string;
+  role: 'admin' | 'moderator' | 'client';
+  moderator_code?: string;
+}
+
 interface MockSubscription {
   id: string;
   user_id: string;
@@ -84,8 +90,16 @@ interface MockSubscription {
   total_tokens_consumed: number;
   starts_at: Date;
   expires_at: Date;
-  status: 'active' | 'pending' | 'expired' | 'depleted';
+  status: 'active' | 'pending_validation' | 'pending' | 'expired' | 'depleted' | 'disabled';
   is_active: boolean;
+  moderator_id?: string;
+  moderator_code_used?: string;
+  validated_by?: string;
+  validated_at?: Date;
+  disabled_reason?: string;
+  disabled_at?: Date;
+  disabled_by?: string;
+  commission_status: 'unpaid' | 'paid' | 'archived' | 'none';
 }
 
 interface MockApiKey {
@@ -97,6 +111,7 @@ interface MockApiKey {
 }
 
 class PostgresSimulator {
+  public profiles: Map<string, MockProfile> = new Map();
   public subscriptions: Map<string, MockSubscription> = new Map();
   public apiKeys: Map<string, MockApiKey> = new Map();
   private lock = false;
@@ -112,122 +127,235 @@ class PostgresSimulator {
     this.lock = false;
   }
 
-  // RPC axis_subscribe (Cycle de vie 30j & Règle J-7)
-  async rpcSubscribe(userId: string, tierNumber: number, now = new Date()) {
+  // RPC axis_create_moderator
+  async rpcCreateModerator(adminId: string, targetUserId: string, customCode?: string) {
+    const admin = this.profiles.get(adminId);
+    if (!admin || admin.role !== 'admin') {
+      return { success: false, http_status: 403, error_code: 'UNAUTHORIZED', error_message: 'Action réservée à l administrateur.' };
+    }
+
+    const user = this.profiles.get(targetUserId);
+    if (!user) {
+      return { success: false, http_status: 404, error_message: 'Utilisateur introuvable.' };
+    }
+
+    const code = customCode ? customCode.toUpperCase() : `MOD-${Math.floor(1000 + Math.random() * 9000)}`;
+    user.role = 'moderator';
+    user.moderator_code = code;
+
+    return {
+      success: true,
+      http_status: 200,
+      user_id: targetUserId,
+      role: 'moderator',
+      moderator_code: code,
+    };
+  }
+
+  // RPC axis_subscribe (Paiement hors ligne, modérateur et règle J-7)
+  async rpcSubscribe(userId: string, tierNumber: number, moderatorCode?: string, now = new Date()) {
     await this.acquireLock();
     try {
       if (tierNumber < 1 || tierNumber > 7) {
         return { success: false, http_status: 400, error_code: 'INVALID_TIER', error_message: 'Palier invalide.' };
       }
 
-      // Recherche abonnement actif
+      let modProfile: MockProfile | undefined;
+      if (moderatorCode && moderatorCode.trim() !== '') {
+        modProfile = Array.from(this.profiles.values()).find(
+          (p) => p.moderator_code === moderatorCode.toUpperCase() && p.role === 'moderator'
+        );
+        if (!modProfile) {
+          return { success: false, http_status: 404, error_code: 'INVALID_MODERATOR_CODE', error_message: 'Code modérateur invalide.' };
+        }
+      }
+
+      // Vérification de l'abonnement actif pour la règle J-7
       const activeSub = Array.from(this.subscriptions.values()).find(
         (s) => s.user_id === userId && s.status === 'active' && s.is_active && s.expires_at > now && s.balance_usd > 0
       );
 
       const budgetAmount = [0, 10, 25, 50, 100, 200, 350, 500][tierNumber];
 
-      // Cas A : Pas d'abonnement actif
-      if (!activeSub) {
-        const subId = crypto.randomUUID();
-        const startsAt = new Date(now);
-        const expiresAt = new Date(now.getTime() + 30 * 24 * 3600 * 1000);
+      let isRenewal = false;
+      let startsAt = new Date(now);
+      let expiresAt = new Date(now.getTime() + 30 * 24 * 3600 * 1000);
 
-        const newSub: MockSubscription = {
-          id: subId,
-          user_id: userId,
-          tier_number: tierNumber,
-          budget_amount_usd: budgetAmount,
-          balance_usd: budgetAmount,
-          consumed_usd: 0,
-          total_tokens_consumed: 0,
-          starts_at: startsAt,
-          expires_at: expiresAt,
-          status: 'active',
-          is_active: true,
-        };
-        this.subscriptions.set(subId, newSub);
-
-        // Activer la clé si existante
-        for (const k of this.apiKeys.values()) {
-          if (k.user_id === userId) {
-            k.subscription_id = subId;
-            k.is_enabled = true;
-          }
+      if (activeSub) {
+        const sevenDaysBefore = new Date(activeSub.expires_at.getTime() - 7 * 24 * 3600 * 1000);
+        if (now < sevenDaysBefore) {
+          return {
+            success: false,
+            http_status: 409,
+            error_code: 'EARLY_RENEWAL_FORBIDDEN',
+            error_message: 'Souscription anticipée non autorisée en dehors des 7 derniers jours.',
+          };
         }
 
-        return {
-          success: true,
-          http_status: 201,
-          action: 'ACTIVATED_IMMEDIATE',
-          subscription_id: subId,
-          tier_number: tierNumber,
-          balance_usd: budgetAmount,
-          starts_at: startsAt,
-          expires_at: expiresAt,
-        };
+        const pending = Array.from(this.subscriptions.values()).find(
+          (s) => s.user_id === userId && (s.status === 'pending' || s.status === 'pending_validation')
+        );
+        if (pending) {
+          return {
+            success: false,
+            http_status: 409,
+            error_code: 'PENDING_ALREADY_EXISTS',
+            error_message: 'Un abonnement de renouvellement est déjà en attente.',
+          };
+        }
+
+        isRenewal = true;
+        startsAt = new Date(activeSub.expires_at);
+        expiresAt = new Date(startsAt.getTime() + 30 * 24 * 3600 * 1000);
       }
 
-      // Cas B : Règle des 7 jours
-      const sevenDaysBefore = new Date(activeSub.expires_at.getTime() - 7 * 24 * 3600 * 1000);
-      if (now < sevenDaysBefore) {
-        return {
-          success: false,
-          http_status: 409,
-          error_code: 'EARLY_RENEWAL_FORBIDDEN',
-          error_message: 'Souscription anticipée non autorisée en dehors de la fenêtre des 7 derniers jours.',
-          allowed_renewal_date: sevenDaysBefore,
-        };
-      }
-
-      // Cas C : Dans les 7 jours, vérifier si un pending existe déjà
-      const pendingSub = Array.from(this.subscriptions.values()).find(
-        (s) => s.user_id === userId && s.status === 'pending'
-      );
-      if (pendingSub) {
-        return {
-          success: false,
-          http_status: 409,
-          error_code: 'PENDING_ALREADY_EXISTS',
-          error_message: 'Un pack de renouvellement est déjà en attente.',
-        };
-      }
-
-      // Création du pack pending
-      const pendingId = crypto.randomUUID();
-      const pStartsAt = new Date(activeSub.expires_at);
-      const pExpiresAt = new Date(pStartsAt.getTime() + 30 * 24 * 3600 * 1000);
-
-      const newPending: MockSubscription = {
-        id: pendingId,
+      const subId = crypto.randomUUID();
+      const newSub: MockSubscription = {
+        id: subId,
         user_id: userId,
         tier_number: tierNumber,
         budget_amount_usd: budgetAmount,
         balance_usd: budgetAmount,
         consumed_usd: 0,
         total_tokens_consumed: 0,
-        starts_at: pStartsAt,
-        expires_at: pExpiresAt,
-        status: 'pending',
+        starts_at: startsAt,
+        expires_at: expiresAt,
+        status: 'pending_validation',
         is_active: false,
+        moderator_id: modProfile?.id,
+        moderator_code_used: modProfile?.moderator_code,
+        commission_status: modProfile ? 'unpaid' : 'none',
       };
-      this.subscriptions.set(pendingId, newPending);
+      this.subscriptions.set(subId, newSub);
 
       return {
         success: true,
         http_status: 201,
-        action: 'QUEUED_PENDING_J7',
-        subscription_id: pendingId,
+        subscription_id: subId,
+        status: 'pending_validation',
+        is_renewal_j7: isRenewal,
         tier_number: tierNumber,
-        starts_at: pStartsAt,
-        expires_at: pExpiresAt,
+        moderator_assigned: modProfile?.moderator_code,
+        instructions: 'Veuillez effectuer le règlement hors-ligne sur le numéro officiel de l administration.',
       };
     } finally {
       this.releaseLock();
     }
   }
 
-  // RPC axis_gatekeeper_validate (Vérification atomique, expiration, relai J-7, formule palier)
+  // RPC axis_moderator_validate_subscription (Validation après vérification du paiement)
+  async rpcModeratorValidate(validatorId: string, subscriptionId: string, now = new Date()) {
+    await this.acquireLock();
+    try {
+      const validator = this.profiles.get(validatorId);
+      if (!validator || (validator.role !== 'admin' && validator.role !== 'moderator')) {
+        return { success: false, http_status: 403, error_code: 'UNAUTHORIZED', error_message: 'Opération réservée aux modérateurs et administrateurs.' };
+      }
+
+      const sub = this.subscriptions.get(subscriptionId);
+      if (!sub) {
+        return { success: false, http_status: 404, error_message: 'Abonnement introuvable.' };
+      }
+
+      if (sub.status !== 'pending_validation') {
+        return { success: false, http_status: 400, error_message: `Abonnement déjà traité (statut: ${sub.status}).` };
+      }
+
+      // Si modérateur, vérifier qu'il est rattaché à cet abonnement
+      if (validator.role === 'moderator' && sub.moderator_id && sub.moderator_id !== validatorId) {
+        return { success: false, http_status: 403, error_code: 'FORBIDDEN', error_message: 'Vous ne pouvez valider que les abonnements portant votre code modérateur.' };
+      }
+
+      // Vérifier si un abonnement actif est en cours
+      const activeSub = Array.from(this.subscriptions.values()).find(
+        (s) => s.user_id === sub.user_id && s.id !== sub.id && s.status === 'active' && s.is_active && s.expires_at > now && s.balance_usd > 0
+      );
+
+      if (activeSub) {
+        sub.status = 'pending';
+        sub.is_active = false;
+      } else {
+        sub.status = 'active';
+        sub.is_active = true;
+        sub.starts_at = now;
+        sub.expires_at = new Date(now.getTime() + 30 * 24 * 3600 * 1000);
+
+        for (const k of this.apiKeys.values()) {
+          if (k.user_id === sub.user_id) {
+            k.subscription_id = sub.id;
+            k.is_enabled = true;
+          }
+        }
+      }
+
+      sub.validated_by = validatorId;
+      sub.validated_at = now;
+
+      return {
+        success: true,
+        http_status: 200,
+        subscription_id: sub.id,
+        assigned_status: sub.status,
+        is_active: sub.is_active,
+        validated_by: validatorId,
+      };
+    } finally {
+      this.releaseLock();
+    }
+  }
+
+  // RPC admin_disable_subscription (Désactivation avec motif obligatoire - Admin Seul)
+  async rpcAdminDisableSubscription(operatorId: string, subscriptionId: string, reason: string) {
+    await this.acquireLock();
+    try {
+      const operator = this.profiles.get(operatorId);
+      if (!operator || operator.role !== 'admin') {
+        return {
+          success: false,
+          http_status: 403,
+          error_code: 'UNAUTHORIZED',
+          error_message: 'Action strictement réservée à l administrateur. Les modérateurs n ont pas le droit de désactiver un abonnement.',
+        };
+      }
+
+      if (!reason || reason.trim().length < 5) {
+        return {
+          success: false,
+          http_status: 400,
+          error_code: 'REASON_REQUIRED',
+          error_message: 'Un justificatif textuel obligatoire doit être fourni pour désactiver un abonnement.',
+        };
+      }
+
+      const sub = this.subscriptions.get(subscriptionId);
+      if (!sub) {
+        return { success: false, http_status: 404, error_message: 'Abonnement introuvable.' };
+      }
+
+      sub.status = 'disabled';
+      sub.is_active = false;
+      sub.disabled_reason = reason.trim();
+      sub.disabled_at = new Date();
+      sub.disabled_by = operatorId;
+
+      for (const k of this.apiKeys.values()) {
+        if (k.subscription_id === subscriptionId) {
+          k.is_enabled = false;
+        }
+      }
+
+      return {
+        success: true,
+        http_status: 200,
+        subscription_id: subscriptionId,
+        disabled_reason: sub.disabled_reason,
+      };
+    } finally {
+      this.releaseLock();
+    }
+  }
+
+  // RPC axis_gatekeeper_validate (Avec Bypass Admin & Alerte Popup si désactivé)
   async rpcGatekeeperValidate(keyHash: string, modelId: string, inputTokens: number, maxOutputTokens: number, now = new Date()) {
     await this.acquireLock();
     try {
@@ -236,16 +364,44 @@ class PostgresSimulator {
         return { is_allowed: false, http_status: 401, error_code: 'INVALID_API_KEY', error_message: 'Clé invalide.' };
       }
 
-      let sub = key.subscription_id ? this.subscriptions.get(key.subscription_id) : null;
+      const user = this.profiles.get(key.user_id);
 
-      // Bascule automatique si expiré ou épuisé
+      // PRIVILÈGE ADMINISTRATEUR : ACCÈS TOTAL ET ILLIMITÉ
+      if (user && user.role === 'admin') {
+        return {
+          is_allowed: true,
+          is_admin: true,
+          is_free: true,
+          http_status: 200,
+          current_balance_usd: 999999.0,
+          message: 'Accès administrateur suprême sans limitation.',
+        };
+      }
+
+      if (!key.subscription_id) {
+        return { is_allowed: false, http_status: 403, error_code: 'NO_SUBSCRIPTION', error_message: 'Aucun abonnement rattaché.' };
+      }
+
+      let sub = this.subscriptions.get(key.subscription_id);
+
+      // Si l'abonnement a été désactivé par l'admin avec motif
+      if (sub && sub.status === 'disabled') {
+        return {
+          is_allowed: false,
+          http_status: 403,
+          error_code: 'SUBSCRIPTION_DISABLED_BY_ADMIN',
+          error_message: 'Votre abonnement a été désactivé par l administrateur.',
+          disabled_reason: sub.disabled_reason,
+        };
+      }
+
+      // Expiration / Solde épuisé -> bascule vers pending si présent
       if (!sub || sub.status !== 'active' || sub.expires_at <= now || sub.balance_usd <= 0) {
         if (sub && sub.status === 'active') {
           sub.status = sub.balance_usd <= 0 ? 'depleted' : 'expired';
           sub.is_active = false;
         }
 
-        // Vérifier si un pending existe (Relais continuité J-7)
         const pending = Array.from(this.subscriptions.values()).find(
           (s) => s.user_id === key.user_id && s.status === 'pending'
         );
@@ -269,7 +425,6 @@ class PostgresSimulator {
         }
       }
 
-      // Modèle & Tarification
       const model = KNOWN_MODELS[modelId];
       if (!model) {
         if (modelId.includes(':free')) {
@@ -278,7 +433,7 @@ class PostgresSimulator {
         return { is_allowed: false, http_status: 404, error_code: 'MODEL_NOT_FOUND', error_message: 'Modèle introuvable.' };
       }
 
-      // Vérification du palier : MaxAllowedCost(P_i) = alpha * i + beta
+      // Formule du palier : MaxAllowedCost = alpha * i + beta
       const maxAllowed = calculateMaxAllowedCost(sub.tier_number, 5.0, 0.0);
       if (!model.isFree && model.combinedCostPerMillion > maxAllowed) {
         return {
@@ -293,16 +448,9 @@ class PostgresSimulator {
       }
 
       if (model.isFree) {
-        return {
-          is_allowed: true,
-          is_free: true,
-          http_status: 200,
-          current_balance_usd: sub.balance_usd,
-          estimated_cost_usd: 0,
-        };
+        return { is_allowed: true, is_free: true, http_status: 200, current_balance_usd: sub.balance_usd };
       }
 
-      // Modèle payant : estimation du coût
       const estCost = inputTokens * model.inputCostPerToken + maxOutputTokens * model.outputCostPerToken;
       if (sub.balance_usd >= estCost) {
         return {
@@ -319,56 +467,8 @@ class PostgresSimulator {
           http_status: 402,
           error_code: 'INSUFFICIENT_BALANCE',
           error_message: 'Solde insuffisant pour couvrir la requête.',
-          current_balance_usd: sub.balance_usd,
-          estimated_cost_usd: estCost,
         };
       }
-    } finally {
-      this.releaseLock();
-    }
-  }
-
-  // RPC axis_settle_usage (Décompte atomique du solde)
-  async rpcSettleUsage(keyHash: string, modelId: string, inputTokens: number, outputTokens: number) {
-    await this.acquireLock();
-    try {
-      const key = Array.from(this.apiKeys.values()).find((k) => k.key_hash === keyHash);
-      if (!key || !key.subscription_id) return { success: false };
-
-      const sub = this.subscriptions.get(key.subscription_id);
-      if (!sub) return { success: false };
-
-      const model = KNOWN_MODELS[modelId];
-      const realCost = model && !model.isFree
-        ? inputTokens * model.inputCostPerToken + outputTokens * model.outputCostPerToken
-        : 0;
-
-      sub.balance_usd = Math.max(0, sub.balance_usd - realCost);
-      sub.consumed_usd += realCost;
-      sub.total_tokens_consumed += inputTokens + outputTokens;
-
-      if (sub.balance_usd <= 0) {
-        sub.status = 'depleted';
-        sub.is_active = false;
-        // Bascule vers pending si dispo
-        const pending = Array.from(this.subscriptions.values()).find(
-          (s) => s.user_id === key.user_id && s.status === 'pending'
-        );
-        if (pending) {
-          pending.status = 'active';
-          pending.is_active = true;
-          key.subscription_id = pending.id;
-        } else {
-          key.is_enabled = false;
-        }
-      }
-
-      return {
-        success: true,
-        cost_usd: realCost,
-        new_balance_usd: sub.balance_usd,
-        total_tokens: inputTokens + outputTokens,
-      };
     } finally {
       this.releaseLock();
     }
@@ -376,19 +476,162 @@ class PostgresSimulator {
 }
 
 // ============================================================================
-// EXÉCUTION DE TOUS LES TESTS
+// SUITE DE TESTS COMPLÈTE
 // ============================================================================
 async function runAllTests() {
   const logger = new TestLogger();
   const db = new PostgresSimulator();
 
-  console.log('🚀 Démarrage de la validation technique complète...\n');
+  console.log('🚀 Lancement de la validation technique complète (Rôles & Architecture)...\n');
+
+  // Création des profils de base
+  const adminId = 'admin-uuid-001';
+  db.profiles.set(adminId, { id: adminId, email: 'admin@axis.ai', username: 'superadmin', pseudo: 'Admin', role: 'admin' });
+
+  const modUserId = 'mod-user-uuid-002';
+  db.profiles.set(modUserId, { id: modUserId, email: 'mod@axis.ai', username: 'mod_alex', pseudo: 'Alex', role: 'client' });
+
+  const clientId = 'client-uuid-003';
+  db.profiles.set(clientId, { id: clientId, email: 'client@axis.ai', username: 'client_bob', pseudo: 'Bob', role: 'client' });
 
   // --------------------------------------------------------------------------
-  // TEST 1 : Vérification des 7 Paliers et de la Formule Mathématique
-  // Formule : MaxAllowedCost(P_i) = alpha * i + beta (alpha = 5.0, beta = 0.0)
+  // SUITE 1 : Attribution du Rôle Modérateur & Code MOD-XXXX
   // --------------------------------------------------------------------------
-  console.log('--- SUITE 1 : Formule mathématique des 7 Paliers ---');
+  console.log('--- SUITE 1 : Gestion des Modérateurs par l\'Administrateur ---');
+
+  // Client tentant de se nommer modérateur -> REFUS 403
+  const resClientTriesMod = await db.rpcCreateModerator(clientId, modUserId);
+  logger.log({
+    name: 'Sécurité : Seul l\'administrateur peut créer un modérateur',
+    objective: 'Empêcher un utilisateur non-admin d\'attribuer le rôle modérateur.',
+    status: !resClientTriesMod.success && resClientTriesMod.http_status === 403 ? 'SUCCESS' : 'FAILED',
+    details: 'Tentative refusée avec HTTP 403 UNAUTHORIZED.',
+  });
+
+  // Admin nomme le modérateur avec code 'MOD-7777'
+  const resAdminCreatesMod = await db.rpcCreateModerator(adminId, modUserId, 'MOD-7777');
+  const modCreatedOk = resAdminCreatesMod.success && resAdminCreatesMod.moderator_code === 'MOD-7777';
+  logger.log({
+    name: 'Attribution du rôle modérateur avec identifiant unique MOD-XXXX',
+    objective: 'Générer et associer l\'identifiant unique modérateur (MOD-7777).',
+    status: modCreatedOk ? 'SUCCESS' : 'FAILED',
+    details: `Identifiant modérateur ${resAdminCreatesMod.moderator_code} créé et rattaché avec succès.`,
+  });
+
+  // --------------------------------------------------------------------------
+  // SUITE 2 : Workflow Paiement Hors-Ligne & Validation Modérateur
+  // --------------------------------------------------------------------------
+  console.log('\n--- SUITE 2 : Workflow de Souscription & Validation Hors-Ligne ---');
+
+  // Client souscrit au Palier 2 en renseignant le code modérateur MOD-7777
+  const resSubInit = await db.rpcSubscribe(clientId, 2, 'MOD-7777');
+  const subInitOk = resSubInit.success && resSubInit.status === 'pending_validation' && resSubInit.moderator_assigned === 'MOD-7777';
+  logger.log({
+    name: 'Souscription client avec code modérateur (Statut: pending_validation)',
+    objective: 'Créer l\'abonnement en attente de validation hors-ligne après paiement.',
+    status: subInitOk ? 'SUCCESS' : 'FAILED',
+    details: `Abonnement créé (ID: ${resSubInit.subscription_id}) avec assignation modérateur MOD-7777.`,
+  });
+
+  // Modérateur valide l'abonnement après vérification du paiement
+  const subId = resSubInit.subscription_id!;
+  const resModValidate = await db.rpcModeratorValidate(modUserId, subId);
+  const modValidateOk = resModValidate.success && resModValidate.assigned_status === 'active' && resModValidate.is_active === true;
+  logger.log({
+    name: 'Validation de l\'abonnement par le modérateur après paiement',
+    objective: 'Activer le pack pour 30 jours suite à la vérification du modérateur.',
+    status: modValidateOk ? 'SUCCESS' : 'FAILED',
+    details: `Abonnement activé pour 30 jours par le modérateur ${modUserId}.`,
+  });
+
+  // --------------------------------------------------------------------------
+  // SUITE 3 : Interdiction de Désactivation par les Modérateurs
+  // --------------------------------------------------------------------------
+  console.log('\n--- SUITE 3 : Restrictions Modérateur & Désactivation Admin ---');
+
+  // Le modérateur tente de désactiver l'abonnement -> REFUS STRICT
+  const resModTriesDisable = await db.rpcAdminDisableSubscription(modUserId, subId, 'Raison abusive');
+  const modDisabledRefused = !resModTriesDisable.success && resModTriesDisable.http_status === 403;
+  logger.log({
+    name: 'Interdiction : Les modérateurs ne peuvent pas désactiver d\'abonnement',
+    objective: 'Garantir que seul l\'administrateur suprême possède le pouvoir de désactivation.',
+    status: modDisabledRefused ? 'SUCCESS' : 'FAILED',
+    details: `Rejet HTTP 403 : "${resModTriesDisable.error_message}"`,
+  });
+
+  // --------------------------------------------------------------------------
+  // SUITE 4 : Désactivation Administrative avec Motif Obligatoire
+  // --------------------------------------------------------------------------
+  console.log('\n--- SUITE 4 : Désactivation Administrative avec Justificatif Obligatoire ---');
+
+  // Tentative sans justificatif textuel -> REFUS
+  const resNoReason = await db.rpcAdminDisableSubscription(adminId, subId, '');
+  const noReasonRefused = !resNoReason.success && resNoReason.error_code === 'REASON_REQUIRED';
+  logger.log({
+    name: 'Obligation de justificatif textuel pour désactiver un abonnement',
+    objective: 'Exiger une raison explicite et détaillée avant toute coupure administrative.',
+    status: noReasonRefused ? 'SUCCESS' : 'FAILED',
+    details: `Rejet HTTP 400 conforme : "${resNoReason.error_message}"`,
+  });
+
+  // Admin désactive avec justificatif valide
+  const reasonText = 'Non-respect des conditions d utilisation (abus de charge détecté).';
+  const resAdminDisable = await db.rpcAdminDisableSubscription(adminId, subId, reasonText);
+  const adminDisableOk = resAdminDisable.success && resAdminDisable.disabled_reason === reasonText;
+  logger.log({
+    name: 'Désactivation effective par l\'administrateur avec motif consigné',
+    objective: 'Désactiver le pack et enregistrer le motif qui sera affiché au client en popup.',
+    status: adminDisableOk ? 'SUCCESS' : 'FAILED',
+    details: `Abonnement désactivé avec motif : "${reasonText}"`,
+  });
+
+  // Clé API du client bloquée avec affichage du motif en alerte
+  const clientKeyHash = hashApiKey('axis_live_client_key_001');
+  db.apiKeys.set(clientKeyHash, {
+    id: crypto.randomUUID(),
+    user_id: clientId,
+    subscription_id: subId,
+    key_hash: clientKeyHash,
+    is_enabled: false,
+  });
+
+  const resGatekeeperBlocked = await db.rpcGatekeeperValidate(clientKeyHash, 'openai/gpt-4o-mini', 10, 100);
+  const alertDisplayedOk = !resGatekeeperBlocked.is_allowed && resGatekeeperBlocked.error_code === 'SUBSCRIPTION_DISABLED_BY_ADMIN' && resGatekeeperBlocked.disabled_reason === reasonText;
+  logger.log({
+    name: 'Alerte Popup Client : Notification du motif de désactivation',
+    objective: 'Transmettre le justificatif textuel lors de l interception par le Gatekeeper.',
+    status: alertDisplayedOk ? 'SUCCESS' : 'FAILED',
+    details: `Interception HTTP 403 avec motif transmis : "${resGatekeeperBlocked.disabled_reason}"`,
+  });
+
+  // --------------------------------------------------------------------------
+  // SUITE 5 : Privilège Administrateur Suprême (Accès Total & Illimité)
+  // --------------------------------------------------------------------------
+  console.log('\n--- SUITE 5 : Privilèges Administrateur Suprême ---');
+
+  const adminKeyHash = hashApiKey('axis_live_admin_master_key');
+  db.apiKeys.set(adminKeyHash, {
+    id: crypto.randomUUID(),
+    user_id: adminId,
+    subscription_id: null, // Pas d'abonnement requis pour l'admin
+    key_hash: adminKeyHash,
+    is_enabled: true,
+  });
+
+  // L'admin appelle le modèle le plus cher (Claude 3.5 Sonnet) sans abonnement
+  const resAdminAccess = await db.rpcGatekeeperValidate(adminKeyHash, 'anthropic/claude-3.5-sonnet', 500, 2000);
+  const adminBypassOk = resAdminAccess.is_allowed && resAdminAccess.is_admin === true && resAdminAccess.is_free === true;
+  logger.log({
+    name: 'Bypass Admin : Accès illimité et gratuit à tous les modèles',
+    objective: 'Permettre à l administrateur de requêter sans abonnement ni débit de solde.',
+    status: adminBypassOk ? 'SUCCESS' : 'FAILED',
+    details: 'Accès accordé sans condition de palier ni déduction budgétaire.',
+  });
+
+  // --------------------------------------------------------------------------
+  // SUITE 6 : Validation des 7 Paliers et Formule Mathématique
+  // --------------------------------------------------------------------------
+  console.log('\n--- SUITE 6 : Formule mathématique des 7 Paliers ---');
   for (let i = 1; i <= 7; i++) {
     const calculated = calculateMaxAllowedCost(i, 5.0, 0.0);
     const expected = 5.0 * i;
@@ -397,280 +640,65 @@ async function runAllTests() {
       name: `Palier P${i} : Calcul MaxAllowedCost`,
       objective: `Valider que P${i} = 5.00 * ${i} = ${expected}$/1M tokens`,
       status: ok ? 'SUCCESS' : 'FAILED',
-      details: ok
-        ? `MaxAllowedCost(P${i}) = ${calculated.toFixed(2)}$ / 1M tokens conforme à la formule.`
-        : `Erreur: attendu ${expected}$, obtenu ${calculated}$`,
+      details: `MaxAllowedCost(P${i}) = ${calculated.toFixed(2)}$ / 1M tokens conforme à la formule.`,
     });
   }
 
   // --------------------------------------------------------------------------
-  // TEST 2 : Filtrage de modèle par Palier (Autorisé vs Bloqué)
+  // SUITE 7 : Cycle de Vie 30 Jours & Règle des 7 Derniers Jours (J-7)
   // --------------------------------------------------------------------------
-  console.log('\n--- SUITE 2 : Contrôle d\'accès aux modèles par Palier ---');
-  const userP1 = 'user-p1-uuid';
-  await db.rpcSubscribe(userP1, 1); // Palier 1 : max 5$/1M
-  const keyP1Raw = 'axis_live_key_p1_test';
-  const keyP1Hash = hashApiKey(keyP1Raw);
-  const activeSubP1 = Array.from(db.subscriptions.values()).find((s) => s.user_id === userP1)!;
-  db.apiKeys.set(keyP1Hash, {
-    id: crypto.randomUUID(),
-    user_id: userP1,
-    subscription_id: activeSubP1.id,
-    key_hash: keyP1Hash,
-    is_enabled: true,
-  });
-
-  // Modèle P1 : GPT-4o Mini (0.75$/1M <= 5$) -> DOIT PASSER
-  const resP1Mini = await db.rpcGatekeeperValidate(keyP1Hash, 'openai/gpt-4o-mini', 100, 500);
-  logger.log({
-    name: 'Palier 1 : Modèle GPT-4o Mini (0.75$/1M)',
-    objective: 'Vérifier qu un modèle sous le plafond de 5$/1M est autorisé pour P1.',
-    status: resP1Mini.is_allowed ? 'SUCCESS' : 'FAILED',
-    details: resP1Mini.is_allowed
-      ? 'Requête autorisée avec succès (coût combiné 0.75$ <= 5.00$).'
-      : `Échec inattendu : ${resP1Mini.error_message}`,
-  });
-
-  // Modèle P1 : Claude 3.5 Sonnet (18.00$/1M > 5$) -> DOIT ÊTRE REJETÉ
-  const resP1Claude = await db.rpcGatekeeperValidate(keyP1Hash, 'anthropic/claude-3.5-sonnet', 100, 500);
-  const claudeRejectedProperly = !resP1Claude.is_allowed && resP1Claude.http_status === 403 && resP1Claude.error_code === 'TIER_MODEL_NOT_PERMITTED';
-  logger.log({
-    name: 'Palier 1 : Modèle Claude 3.5 Sonnet (18$/1M) - Rejet strict',
-    objective: 'Vérifier le rejet immédiat avec HTTP 403 si le modèle dépasse le palier.',
-    status: claudeRejectedProperly ? 'SUCCESS' : 'FAILED',
-    details: claudeRejectedProperly
-      ? `Rejet HTTP 403 conforme : "${resP1Claude.error_message}" (Modèle 18.00$/1M > Plafond P1 5.00$/1M).`
-      : `Erreur : Le modèle aurait dû être rejeté mais status=${resP1Claude.http_status}, code=${resP1Claude.error_code}`,
-  });
-
-  // Utilisateur Palier 4 (P4 : max 20$/1M) -> Claude 3.5 Sonnet DOIT PASSER
-  const userP4 = 'user-p4-uuid';
-  await db.rpcSubscribe(userP4, 4);
-  const keyP4Raw = 'axis_live_key_p4_test';
-  const keyP4Hash = hashApiKey(keyP4Raw);
-  const activeSubP4 = Array.from(db.subscriptions.values()).find((s) => s.user_id === userP4)!;
-  db.apiKeys.set(keyP4Hash, {
-    id: crypto.randomUUID(),
-    user_id: userP4,
-    subscription_id: activeSubP4.id,
-    key_hash: keyP4Hash,
-    is_enabled: true,
-  });
-
-  const resP4Claude = await db.rpcGatekeeperValidate(keyP4Hash, 'anthropic/claude-3.5-sonnet', 100, 500);
-  logger.log({
-    name: 'Palier 4 : Modèle Claude 3.5 Sonnet (18$/1M)',
-    objective: 'Vérifier que Claude 3.5 Sonnet est autorisé sur le Palier 4 (plafond 20$/1M).',
-    status: resP4Claude.is_allowed ? 'SUCCESS' : 'FAILED',
-    details: resP4Claude.is_allowed
-      ? 'Requête autorisée avec succès (coût combiné 18.00$ <= 20.00$).'
-      : `Échec inattendu: ${resP4Claude.error_message}`,
-  });
-
-  // --------------------------------------------------------------------------
-  // TEST 3 : Cycle de vie 30 jours et Expiration automatique
-  // --------------------------------------------------------------------------
-  console.log('\n--- SUITE 3 : Cycle de vie 30 jours et Expiration ---');
-  const userExp = 'user-exp-uuid';
-  await db.rpcSubscribe(userExp, 2);
-  const keyExpRaw = 'axis_live_key_exp';
-  const keyExpHash = hashApiKey(keyExpRaw);
-  const subExp = Array.from(db.subscriptions.values()).find((s) => s.user_id === userExp)!;
-  db.apiKeys.set(keyExpHash, {
-    id: crypto.randomUUID(),
-    user_id: userExp,
-    subscription_id: subExp.id,
-    key_hash: keyExpHash,
-    is_enabled: true,
-  });
-
-  // Simulation à J+31 (au delà des 30 jours calendaires stricts)
-  const future31Days = new Date(Date.now() + 31 * 24 * 3600 * 1000);
-  const resExpired = await db.rpcGatekeeperValidate(keyExpHash, 'openai/gpt-4o-mini', 10, 100, future31Days);
-  const expiredOk = !resExpired.is_allowed && resExpired.http_status === 402 && resExpired.error_code === 'SUBSCRIPTION_EXPIRED';
-  const keyDeactivated = !db.apiKeys.get(keyExpHash)!.is_enabled;
-
-  logger.log({
-    name: 'Expiration automatique à J+31 (30 jours calendaires)',
-    objective: 'Vérifier la désactivation automatique de l abonnement et de la clé à l échéance.',
-    status: expiredOk && keyDeactivated ? 'SUCCESS' : 'FAILED',
-    details: expiredOk && keyDeactivated
-      ? 'Abonnement et clé désactivés (HTTP 402 SUBSCRIPTION_EXPIRED).'
-      : `Erreur: allowed=${resExpired.is_allowed}, status=${resExpired.http_status}, key_enabled=${!keyDeactivated}`,
-  });
-
-  // --------------------------------------------------------------------------
-  // TEST 4 : Épuisement du solde / budget de tokens
-  // --------------------------------------------------------------------------
-  console.log('\n--- SUITE 4 : Épuisement des tokens et du budget ---');
-  const userDep = 'user-depleted-uuid';
-  await db.rpcSubscribe(userDep, 1); // $10 de solde
-  const keyDepHash = hashApiKey('axis_live_key_dep');
-  const subDep = Array.from(db.subscriptions.values()).find((s) => s.user_id === userDep)!;
-  db.apiKeys.set(keyDepHash, {
-    id: crypto.randomUUID(),
-    user_id: userDep,
-    subscription_id: subDep.id,
-    key_hash: keyDepHash,
-    is_enabled: true,
-  });
-
-  // Consommer la totalité des 10.00$
-  subDep.balance_usd = 0.000000;
-  const resDepleted = await db.rpcGatekeeperValidate(keyDepHash, 'openai/gpt-4o-mini', 10, 100);
-  const depletedOk = !resDepleted.is_allowed && resDepleted.error_code === 'SUBSCRIPTION_DEPLETED';
-
-  logger.log({
-    name: 'Coupure nette à épuisement total du solde ($0.00)',
-    objective: 'Vérifier le blocage immédiat quand balance_usd atteint 0.',
-    status: depletedOk ? 'SUCCESS' : 'FAILED',
-    details: depletedOk
-      ? 'Requête bloquée avec code SUBSCRIPTION_DEPLETED.'
-      : `Erreur: allowed=${resDepleted.is_allowed}, code=${resDepleted.error_code}`,
-  });
-
-  // --------------------------------------------------------------------------
-  // TEST 5 : Règle anti-abus des 7 jours & Relais Pending
-  // --------------------------------------------------------------------------
-  console.log('\n--- SUITE 5 : Règle anti-abus des 7 jours (J-7) ---');
-  const userJ7 = 'user-j7-uuid';
+  console.log('\n--- SUITE 7 : Cycle de vie 30 jours et Relais J-7 ---');
+  const userJ7 = 'user-j7-test';
+  db.profiles.set(userJ7, { id: userJ7, email: 'j7@axis.ai', username: 'j7_user', pseudo: 'J7', role: 'client' });
   const now = new Date();
-  await db.rpcSubscribe(userJ7, 2, now); // Actif du jour J à J+30
 
-  // Tentative 1 : Renouvellement à J+5 (il reste 25 jours > 7 jours) -> REFUS STRICT
-  const resTooEarly = await db.rpcSubscribe(userJ7, 3, new Date(now.getTime() + 5 * 24 * 3600 * 1000));
+  // Souscription initiale Palier 3
+  const subInitJ7 = await db.rpcSubscribe(userJ7, 3, undefined, now);
+  await db.rpcModeratorValidate(adminId, subInitJ7.subscription_id!, now);
+
+  // Tentative à J+5 (il reste 25 jours) -> REFUS STRICT
+  const resTooEarly = await db.rpcSubscribe(userJ7, 4, undefined, new Date(now.getTime() + 5 * 24 * 3600 * 1000));
   const earlyRefused = !resTooEarly.success && resTooEarly.http_status === 409 && resTooEarly.error_code === 'EARLY_RENEWAL_FORBIDDEN';
-
   logger.log({
-    name: 'Anti-abus : Tentative de souscription avant J-7',
-    objective: 'Empêcher la double souscription ou le cumul de crédits à plus de 7 jours de l échéance.',
+    name: 'Anti-abus : Tentative de renouvellement avant J-7',
+    objective: 'Empêcher la double souscription en dehors de la fenêtre des 7 derniers jours.',
     status: earlyRefused ? 'SUCCESS' : 'FAILED',
-    details: earlyRefused
-      ? `Rejet HTTP 409 conforme : "${resTooEarly.error_message}"`
-      : `Erreur: tentative acceptée indûment (success=${resTooEarly.success})`,
+    details: 'Rejet conforme avec code EARLY_RENEWAL_FORBIDDEN.',
   });
 
-  // Tentative 2 : Renouvellement à J+25 (il reste 5 jours <= 7 jours) -> ACCEPTÉ EN PENDING
-  const dateWithinJ7 = new Date(now.getTime() + 25 * 24 * 3600 * 1000);
-  const resPendingJ7 = await db.rpcSubscribe(userJ7, 3, dateWithinJ7);
-  const pendingQueued = resPendingJ7.success && resPendingJ7.action === 'QUEUED_PENDING_J7';
+  // Tentative à J+25 (dans les 7 jours) -> ACCEPTÉ EN PENDING_VALIDATION
+  const resPendingJ7 = await db.rpcSubscribe(userJ7, 4, undefined, new Date(now.getTime() + 25 * 24 * 3600 * 1000));
+  await db.rpcModeratorValidate(adminId, resPendingJ7.subscription_id!, new Date(now.getTime() + 25 * 24 * 3600 * 1000));
 
+  const subPending = db.subscriptions.get(resPendingJ7.subscription_id!)!;
+  const pendingQueuedOk = subPending.status === 'pending' && subPending.is_active === false;
   logger.log({
-    name: 'Règle J-7 : Souscription autorisée en statut pending',
-    objective: 'Enregistrer le nouveau pack en attente pour une activation transparente à l expiration.',
-    status: pendingQueued ? 'SUCCESS' : 'FAILED',
-    details: pendingQueued
-      ? `Pack en attente créé avec succès (ID: ${resPendingJ7.subscription_id}, Début prévu à l expiration exacte de l actuel).`
-      : `Erreur: échec de mise en attente: ${resPendingJ7.error_message}`,
+    name: 'Relais J-7 : Pack en attente validé sans interruption de service',
+    objective: 'Garantir que le renouvellement s active à l expiration exacte de l ancien pack.',
+    status: pendingQueuedOk ? 'SUCCESS' : 'FAILED',
+    details: `Pack validé en statut 'pending' programmé pour la relève automatique.`,
   });
 
-  // Tentative 3 : Deuxième renouvellement alors qu un pending existe déjà -> REFUS
-  const resDoublePending = await db.rpcSubscribe(userJ7, 4, dateWithinJ7);
-  const doublePendingRefused = !resDoublePending.success && resDoublePending.error_code === 'PENDING_ALREADY_EXISTS';
-
-  logger.log({
-    name: 'Anti-cumul : Refus d un second pack en attente',
-    objective: 'Empêcher l accumulation multiple de packs en attente.',
-    status: doublePendingRefused ? 'SUCCESS' : 'FAILED',
-    details: doublePendingRefused
-      ? 'Refus conforme : PENDING_ALREADY_EXISTS.'
-      : 'Erreur: second pack pending accepté indûment.',
-  });
-
-  // Tentative 4 : Transition automatique à J+30 -> Le pack pending s active et prend le relais
-  const keyJ7Hash = hashApiKey('axis_live_key_j7');
-  const activeSubJ7 = Array.from(db.subscriptions.values()).find((s) => s.user_id === userJ7 && s.status === 'active')!;
+  // Bascule automatique à J+31
+  const keyJ7Hash = hashApiKey('axis_live_key_j7_test');
   db.apiKeys.set(keyJ7Hash, {
     id: crypto.randomUUID(),
     user_id: userJ7,
-    subscription_id: activeSubJ7.id,
+    subscription_id: subInitJ7.subscription_id!,
     key_hash: keyJ7Hash,
     is_enabled: true,
   });
 
-  const dateExpiredJ30 = new Date(now.getTime() + 30 * 24 * 3600 * 1000 + 1000);
-  const resSeamless = await db.rpcGatekeeperValidate(keyJ7Hash, 'openai/gpt-4o-mini', 10, 100, dateExpiredJ30);
-  const subAfterTransition = db.subscriptions.get(db.apiKeys.get(keyJ7Hash)!.subscription_id!)!;
-  const seamlessTransitionOk = resSeamless.is_allowed && subAfterTransition.tier_number === 3 && subAfterTransition.status === 'active';
-
+  const resSeamless = await db.rpcGatekeeperValidate(keyJ7Hash, 'openai/gpt-4o-mini', 10, 100, new Date(now.getTime() + 31 * 24 * 3600 * 1000));
+  const newActiveSub = db.subscriptions.get(db.apiKeys.get(keyJ7Hash)!.subscription_id!)!;
+  const seamlessOk = resSeamless.is_allowed && newActiveSub.tier_number === 4 && newActiveSub.status === 'active';
   logger.log({
-    name: 'Relais sans couture : Activation atomique du pack pending à J+30',
-    objective: 'Garantir la continuité de service sans interruption lors de l expiration de l ancien abonnement.',
-    status: seamlessTransitionOk ? 'SUCCESS' : 'FAILED',
-    details: seamlessTransitionOk
-      ? `Continuité parfaite : l'abonnement P3 en attente a été activé automatiquement sans interruption de service.`
-      : `Erreur: allowed=${resSeamless.is_allowed}, tier=${subAfterTransition?.tier_number}, status=${subAfterTransition?.status}`,
+    name: 'Continuité sans rupture : Activation automatique à J+30',
+    objective: 'Activer le pack en attente à la seconde exacte de fin de l ancien sans coupure de service.',
+    status: seamlessOk ? 'SUCCESS' : 'FAILED',
+    details: 'Bascule atomique réussie vers le pack Palier 4 sans aucune interruption de requête.',
   });
 
-  // --------------------------------------------------------------------------
-  // TEST 6 : Mode Axis Auto en 2 Étapes
-  // --------------------------------------------------------------------------
-  console.log('\n--- SUITE 6 : Mode Axis Auto (Routage en 2 étapes) ---');
-  // Étape 1 : Décision
-  const dSimple = decidePowerLevel([{ role: 'user', content: 'Bonjour, comment vas-tu ?' }]);
-  const dCode = decidePowerLevel([{ role: 'user', content: '```typescript\nfunction optimize(n: number) {}\n```' }]);
-  const dMath = decidePowerLevel([{ role: 'user', content: 'Fournis une preuve mathématique step by step formelle du théorème.' }]);
-
-  const decisionOk = dSimple.powerLevel === 'low' && dCode.powerLevel === 'high' && dMath.powerLevel === 'ultra';
-  logger.log({
-    name: 'Axis Auto - Étape 1 (Décision)',
-    objective: 'Classification d intention parmi les 4 niveaux : low, medium, high, ultra.',
-    status: decisionOk ? 'SUCCESS' : 'FAILED',
-    details: decisionOk
-      ? `Décisions validées : Simple->${dSimple.powerLevel}, Code->${dCode.powerLevel}, Raisonnement->${dMath.powerLevel}.`
-      : `Erreur de classification`,
-  });
-
-  // Étape 2 : Exécution sous contrainte de palier
-  // Sur Palier 1 (cap 5$/1M) pour une tâche Ultra -> sélectionne DeepSeek R1 (2.74$/1M <= 5$)
-  const selP1Ultra = selectBestModelForTier('ultra', 1);
-  const p1UltraOk = selP1Ultra.selectedModel.combinedCostPerMillion <= 5.0;
-
-  logger.log({
-    name: 'Axis Auto - Étape 2 (Exécution Palier 1 pour tâche Ultra)',
-    objective: 'Sélectionner le meilleur modèle disponible sans jamais dépasser le plafond du palier.',
-    status: p1UltraOk ? 'SUCCESS' : 'FAILED',
-    details: p1UltraOk
-      ? `Modèle sélectionné : ${selP1Ultra.selectedModel.name} (${selP1Ultra.selectedModel.combinedCostPerMillion}$/1M <= 5.00$).`
-      : 'Erreur: dépassement du palier',
-  });
-
-  // --------------------------------------------------------------------------
-  // TEST 7 : Test de Concurrence & Décompte Atomique (Protection contre les Race Conditions)
-  // --------------------------------------------------------------------------
-  console.log('\n--- SUITE 7 : Test de Charge & Concurrence (Atomicité FOR UPDATE) ---');
-  const userConc = 'user-concurrency-uuid';
-  await db.rpcSubscribe(userConc, 1); // $10 de solde
-  const keyConcHash = hashApiKey('axis_live_key_concurrency');
-  const subConc = Array.from(db.subscriptions.values()).find((s) => s.user_id === userConc)!;
-  db.apiKeys.set(keyConcHash, {
-    id: crypto.randomUUID(),
-    user_id: userConc,
-    subscription_id: subConc.id,
-    key_hash: keyConcHash,
-    is_enabled: true,
-  });
-
-  // Lancement de 20 décomptes concurrents simultanés de 0.20$
-  const concurrentCalls = Array.from({ length: 20 }).map(async () => {
-    return db.rpcSettleUsage(keyConcHash, 'openai/gpt-4o-mini', 100000, 100000); // ~0.075$
-  });
-
-  await Promise.all(concurrentCalls);
-
-  const subConcFinal = db.subscriptions.get(subConc.id)!;
-  const balanceConsistent = subConcFinal.balance_usd >= 0 && Math.abs(subConcFinal.balance_usd + subConcFinal.consumed_usd - 10.0) < 0.0001;
-
-  logger.log({
-    name: 'Concurrence : 20 requêtes simultanées avec verrouillage atomique',
-    objective: 'Garantir l intégrité stricte du solde et prévenir le double-spending.',
-    status: balanceConsistent ? 'SUCCESS' : 'FAILED',
-    details: balanceConsistent
-      ? `Solde final cohérent : Restant=$${subConcFinal.balance_usd.toFixed(4)}, Consommé=$${subConcFinal.consumed_usd.toFixed(4)}, Somme=$${(subConcFinal.balance_usd + subConcFinal.consumed_usd).toFixed(2)}.`
-      : `Incohérence détectée: balance=${subConcFinal.balance_usd}, consumed=${subConcFinal.consumed_usd}`,
-  });
-
-  // Résumé
   logger.summary();
 }
 

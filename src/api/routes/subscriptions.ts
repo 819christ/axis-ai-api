@@ -1,12 +1,17 @@
 import { FastifyPluginAsync } from 'fastify';
-import { subscribeUser, supabase } from '../../db/supabase.js';
+import { supabase } from '../../db/supabase.js';
+
 
 export const subscriptionsRoutes: FastifyPluginAsync = async (fastify) => {
   /**
    * Souscription à un abonnement (avec application de la règle anti-abus des 7 jours)
    */
   fastify.post('/subscriptions', async (request, reply) => {
-    const body = request.body as { user_id: string; tier_number: number };
+    const body = request.body as {
+      user_id: string;
+      tier_number: number;
+      moderator_code?: string;
+    };
 
     if (!body || !body.user_id || !body.tier_number) {
       return reply.status(400).send({
@@ -14,9 +19,16 @@ export const subscriptionsRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
-    const result = await subscribeUser(body.user_id, body.tier_number);
-    return reply.status(result.http_status || 200).send(result);
+    const { data, error } = await supabase.rpc('axis_subscribe', {
+      p_user_id: body.user_id,
+      p_tier_number: body.tier_number,
+      p_moderator_code: body.moderator_code || null,
+    });
+
+    if (error) return reply.status(500).send({ error: error.message });
+    return reply.status(data?.http_status || 200).send(data);
   });
+
 
   /**
    * Consultation des 7 paliers disponibles et de la formule mathématique MaxAllowedCost
