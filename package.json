@@ -1,19 +1,27 @@
 {
-  "name": "axis-ai",
+  "name": "axis-ai-api",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Gatekeeper API proxy for OpenRouter with smart routing and budget envelopes",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc",
+    "sync-models": "tsx scripts/sync-openrouter-models.ts",
+    "generate-key": "tsx scripts/generate-demo-key.ts",
+    "test-proxy": "tsx scripts/test-proxy.ts"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["proxy", "openrouter", "gatekeeper", "supabase", "llm-router"],
   "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
     "@fastify/cors": "^11.3.0",
     "@supabase/supabase-js": "^2.117.2",
     "dotenv": "^18.0.5",
     "fastify": "^5.12.5"
   },
- 
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
