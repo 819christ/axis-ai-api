@@ -238,10 +238,12 @@ BEGIN
         v_key_hash := encode(sha256(v_full_key::bytea), 'hex');
     END;
 
-    v_key_prefix := substr(v_full_key, 1, 14) || '...';
+    -- Préfixe court : 'ax_' + 10 hex + '...' = 16 chars exactement (tient dans varchar(16))
+    v_key_prefix := 'ax_' || substr(v_raw_secret, 1, 10) || '...';
 
     INSERT INTO public.api_keys (user_id, subscription_id, key_hash, key_prefix, name, is_enabled, daily_request_limit)
     VALUES (
+
         p_user_id,
         p_subscription_id,
         v_key_hash,
@@ -302,7 +304,9 @@ BEGIN
         v_key_hash := encode(sha256(v_full_key::bytea), 'hex');
     END;
 
-    v_key_prefix := substr(v_full_key, 1, 14) || '...';
+    v_key_prefix := 'ax_' || substr(v_raw_secret, 1, 10) || '...';
+
+
 
     UPDATE public.api_keys
     SET key_hash = v_key_hash,
@@ -321,3 +325,32 @@ BEGIN
     );
 END;
 $$;
+-- ==============================================================================
+-- ÉTAPE 5 : Trigger de synchronisation clé ↔ abonnement
+-- Garantit qu'une clé liée à un abonnement est activée/désactivée en temps réel
+-- lorsque le statut de l'abonnement change (pending_validation → active).
+-- ==============================================================================
+CREATE OR REPLACE FUNCTION public.sync_key_on_subscription_change()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    IF NEW.status IS DISTINCT FROM OLD.status
+       OR NEW.is_active IS DISTINCT FROM OLD.is_active THEN
+        UPDATE public.api_keys
+        SET is_enabled = (NEW.status = 'active' AND NEW.is_active = true),
+            updated_at = timezone('utc'::text, now())
+        WHERE subscription_id = NEW.id;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_sync_key_on_subscription_change ON public.subscriptions;
+CREATE TRIGGER trg_sync_key_on_subscription_change
+    AFTER UPDATE OF status, is_active
+    ON public.subscriptions
+    FOR EACH ROW
+    EXECUTE FUNCTION public.sync_key_on_subscription_change();

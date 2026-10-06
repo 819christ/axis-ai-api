@@ -3,6 +3,7 @@ import { supabase } from '../supabase';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../components/Toast';
 import { Modal } from '../components/Modal';
+import { AdminSecurityButton } from '../components/AdminGate';
 import { ShieldAlert, UserPlus, RefreshCw, Archive, CheckCircle, Ban, Users } from 'lucide-react';
 
 export const AdminPage = () => {
@@ -125,6 +126,7 @@ export const AdminPage = () => {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
+          <AdminSecurityButton />
           <button onClick={() => { fetchSubs(); fetchModerators(); }} className="btn-ghost" style={{ padding: '8px 14px', fontSize: 12 }}>
             <RefreshCw size={14} /> Actualiser
           </button>

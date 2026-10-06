@@ -26,9 +26,9 @@ export const useSubscription = () => {
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(1)
-        .single();
-      
-      if (error && error.code !== 'PGRST116') throw error;
+        .maybeSingle();
+
+      if (error) throw error;
       setSubscription(data || null);
     } catch (err) {
       console.error(err);
