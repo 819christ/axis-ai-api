@@ -70,14 +70,15 @@ export const balanceRoutes: FastifyPluginAsync = async (fastify) => {
       .eq('api_key_id', keyRecord.id)
       .gte('created_at', today.toISOString());
 
-    const isExpired = new Date(subRecord.expires_at) <= new Date();
+    const isExpired = Boolean(subRecord.expires_at) && new Date(subRecord.expires_at) <= new Date();
+    const hasCredit = Number(subRecord.balance_usd) > 0;
 
     return reply.send({
       key: {
         id: keyRecord.id,
         prefix: keyRecord.key_prefix,
         name: keyRecord.name,
-        is_enabled: keyRecord.is_enabled && !isExpired && subRecord.is_active,
+        is_enabled: keyRecord.is_enabled && !isExpired && hasCredit && subRecord.is_active,
         daily_limit: keyRecord.daily_request_limit,
         requests_today: dailyRequestsCount || 0,
         last_used_at: keyRecord.last_used_at,
@@ -88,7 +89,7 @@ export const balanceRoutes: FastifyPluginAsync = async (fastify) => {
         balance_usd: subRecord.balance_usd,
         starts_at: subRecord.starts_at,
         expires_at: subRecord.expires_at,
-        is_active: subRecord.is_active && !isExpired,
+        is_active: subRecord.is_active && !isExpired && hasCredit,
         is_expired: isExpired,
       },
     });

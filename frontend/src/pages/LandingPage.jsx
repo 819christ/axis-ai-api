@@ -6,23 +6,15 @@ import { Code2, Terminal, Briefcase, Globe, Shield, MessageCircle, Sparkles } fr
 // conformément à la politique de la plateforme
 
 const TIERS = [
-  { id: 1, name: 'Starter',    priceXof: '1 500',  priceUsd: 2.50,  popular: false },
-  { id: 2, name: 'Basic',      priceXof: '3 000',  priceUsd: 5.00,  popular: false },
-  { id: 3, name: 'Standard',   priceXof: '6 000',  priceUsd: 10.00, popular: false },
-  { id: 4, name: 'Pro',        priceXof: '12 000', priceUsd: 20.00, popular: true  },
-  { id: 5, name: 'Expert',     priceXof: '18 000', priceUsd: 30.00, popular: false },
-  { id: 6, name: 'Master',     priceXof: '24 000', priceUsd: 40.00, popular: false },
-  { id: 7, name: 'Enterprise', priceXof: '30 000', priceUsd: 50.00, popular: false },
-];
-
-const TIER_DESCS = [
-  "Idéal pour découvrir la plateforme avec des modèles d'IA accessibles.",
-  "Pour un usage quotidien léger : rédaction, résumé, assistance.",
-  "Polyvalent — coding, analyse, traduction et rédaction avancée.",
-  "Le choix des développeurs exigeants pour des projets professionnels.",
-  "Applications intensives avec contexte long et haute précision.",
-  "Raisonnement complexe, logique avancée et tâches multi-étapes lourdes.",
-  "Accès complet sans restriction aux plus puissants modèles mondiaux.",
+  { id: 1, family: 'Étudiant & Découverte', name: 'Starter Light', priceXof: '1 500', creditUsd: '1.50', description: 'Pour les résumés, la rédaction et les petits workflows.' },
+  { id: 2, family: 'Étudiant & Découverte', name: 'Starter Standard', priceXof: '2 500', creditUsd: '2.50', description: 'Pour un usage régulier de chatbots et de traduction.' },
+  { id: 3, family: 'Étudiant & Découverte', name: 'Starter Plus', priceXof: '4 500', creditUsd: '4.50', description: 'Pour tester des scripts simples et de petits contextes.' },
+  { id: 4, family: 'Pro & Automatisation', name: 'Pro Starter', priceXof: '7 500', creditUsd: '7.50', description: 'Pour quelques micro-automatisations par jour.' },
+  { id: 5, family: 'Pro & Automatisation', name: 'Pro Standard', priceXof: '12 000', creditUsd: '12.00', description: 'Pour le code et des mini-agents réguliers.' },
+  { id: 6, family: 'Pro & Automatisation', name: 'Pro Advanced', priceXof: '18 000', creditUsd: '18.00', description: 'Pour des flux d’automatisation plus intensifs.' },
+  { id: 7, family: 'Entreprise & Scale', name: 'Business Light', priceXof: '22 000', creditUsd: '22.00', description: 'Pour une agence ou startup en phase de production.' },
+  { id: 8, family: 'Entreprise & Scale', name: 'Business Standard', priceXof: '26 000', creditUsd: '26.00', description: 'Pour des agents autonomes et des processus soutenus.' },
+  { id: 9, family: 'Entreprise & Scale', name: 'Business Ultimate', priceXof: '30 000', creditUsd: '30.00', description: 'Pour les requêtes complexes et l’ingénierie avancée.' },
 ];
 
 export const LandingPage = () => {
@@ -47,7 +39,7 @@ export const LandingPage = () => {
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, padding: '10px 22px', borderRadius: 999, background: 'linear-gradient(90deg, rgba(132,204,22,0.15) 0%, rgba(192,132,252,0.15) 100%)', border: '1px solid rgba(132,204,22,0.4)' }}>
             <Sparkles size={15} color="var(--axis-accent)" />
             <span style={{ fontSize: 13, fontWeight: 700, textAlign: 'center' }}>
-              Axis AI, la toute première plateforme béninoise offrant les modèles d'IA mondiaux à des prix abordables en Francs CFA
+              Axis AI, une passerelle IA pay-as-you-go en Francs CFA
             </span>
           </div>
         </div>
@@ -58,18 +50,18 @@ export const LandingPage = () => {
             <AxisLogo size={76} className="ax-pulse-glow" />
           </div>
           <h1 style={{ fontSize: 'clamp(34px, 5vw, 54px)', fontWeight: 800, marginBottom: 18, letterSpacing: '-0.03em', lineHeight: 1.15 }}>
-            La passerelle d'API IA unifiée en Francs CFA
+            Votre passerelle API IA, payée au crédit consommé
           </h1>
           <p style={{ fontSize: 'clamp(15px, 2vw, 19px)', color: 'var(--axis-textMuted)', maxWidth: 740, margin: '0 auto 34px', lineHeight: 1.6 }}>
-            Une seule clé API standard pour accéder à tous les grands modèles d'IA du marché.<br />
-            Payez simplement par <b>Mobile Money (MTN / Moov)</b> dès <b>1 500 FCFA</b>.
+            Une clé API standard pour utiliser un catalogue sélectionné de modèles IA.<br />
+            Rechargez par <b>Mobile Money (MTN / Moov)</b> à partir de <b>1 500 FCFA</b>.
           </p>
           <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link to="/auth" className="btn-primary" style={{ padding: '14px 32px', fontSize: 16 }}>
-              Créer une clé API gratuitement
+              Créer mon compte
             </Link>
             <a href="#tarifs" className="btn-ghost" style={{ padding: '14px 28px', fontSize: 16 }}>
-              Voir les 7 Forfaits
+              Voir les 9 packs
             </a>
           </div>
         </div>
@@ -101,47 +93,26 @@ export const LandingPage = () => {
         {/* Section Tarifs — SANS prix de modèles ni noms OpenRouter */}
         <section id="tarifs" style={{ marginBottom: 100 }}>
           <div style={{ textAlign: 'center', marginBottom: 44 }}>
-            <span className="badge badge-green" style={{ marginBottom: 12 }}>7 FORFAITS DE 1 500 XOF À 30 000 XOF</span>
-            <h2 style={{ fontSize: 32, fontWeight: 800, marginBottom: 10 }}>Tarification Transparente en Francs CFA (XOF)</h2>
+            <span className="badge badge-green" style={{ marginBottom: 12 }}>9 PACKS DE 1 500 XOF À 30 000 XOF</span>
+            <h2 style={{ fontSize: 32, fontWeight: 800, marginBottom: 10 }}>Un portefeuille IA, sans expiration</h2>
             <p style={{ color: 'var(--axis-textMuted)', fontSize: 14, maxWidth: 680, margin: '0 auto' }}>
-              Des forfaits pensés pour le marché béninois et la sous-région, avec validation instantanée par Mobile Money ou modérateur local.
+              Achetez un pack en FCFA, recevez le crédit USD correspondant après validation, puis utilisez-le à votre rythme.
             </p>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 18, textAlign: 'left' }}>
-            {TIERS.map((tier, i) => (
-              <div key={tier.id} className="card card-hover" style={{
-                border: tier.popular ? '2px solid var(--axis-accent)' : '1px solid var(--axis-border)',
-                position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-                background: tier.popular ? 'linear-gradient(180deg, rgba(132,204,22,0.06) 0%, var(--axis-sidebar) 100%)' : 'var(--axis-sidebar)'
-              }}>
-                {tier.popular && (
-                  <span style={{ position: 'absolute', top: -12, right: 18, background: 'var(--axis-accent)', color: '#131314', padding: '3px 12px', borderRadius: 20, fontSize: 11, fontWeight: 800 }}>
-                    POPULAIRE
-                  </span>
-                )}
-
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
-                    <h3 style={{ fontSize: 19, fontWeight: 700 }}>Palier {tier.id}</h3>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--axis-accent)' }}>{tier.name}</span>
-                  </div>
-
-                  {/* Prix en XOF au premier plan */}
-                  <div style={{ fontSize: 30, fontWeight: 900, marginTop: 4 }}>
-                    {tier.priceXof} <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--axis-accent)' }}>FCFA</span>
-                  </div>
-                  <div style={{ color: 'var(--axis-textMuted)', fontSize: 12, marginBottom: 18 }}>
-                    Durée : 30 jours
-                  </div>
-
-                  <p style={{ fontSize: 12.5, color: 'var(--axis-textMuted)', lineHeight: 1.5, marginBottom: 22, minHeight: 40 }}>
-                    {TIER_DESCS[i]}
-                  </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 12, textAlign: 'left' }}>
+            {TIERS.map((pack) => (
+              <div key={pack.id} className="card card-hover" style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+                <span className="badge badge-gray" style={{ alignSelf: 'flex-start', fontSize: 9 }}>{pack.family}</span>
+                <h3 style={{ fontSize: 17, fontWeight: 750 }}>{pack.name}</h3>
+                <p style={{ minHeight: 37, fontSize: 12, color: 'var(--axis-textMuted)', lineHeight: 1.5 }}>{pack.description}</p>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginTop: 'auto' }}>
+                  <b style={{ fontSize: 22 }}>{pack.priceXof} <span style={{ fontSize: 12, color: 'var(--axis-accent)' }}>FCFA</span></b>
+                  <span style={{ fontSize: 12, color: 'var(--axis-accent)', fontWeight: 700 }}>${pack.creditUsd} crédit</span>
                 </div>
-
-                <Link to="/auth" className={tier.popular ? "btn-primary" : "btn-ghost"} style={{ width: '100%', textAlign: 'center', justifyContent: 'center' }}>
-                  Choisir ce forfait
+                <div style={{ fontSize: 10.5, color: 'var(--axis-muted)' }}>Paiement unique · aucun délai d’expiration</div>
+                <Link to="/auth" className="btn-ghost" style={{ width: '100%', textAlign: 'center', justifyContent: 'center', padding: '8px 12px' }}>
+                  Découvrir ce pack
                 </Link>
               </div>
             ))}
@@ -153,7 +124,7 @@ export const LandingPage = () => {
           <div style={{ maxWidth: 900, margin: '0 auto' }}>
             <h2 style={{ fontSize: 24, fontWeight: 800, marginBottom: 10 }}>Paiement Local & Validation Instantanée</h2>
             <p style={{ color: 'var(--axis-textMuted)', fontSize: 13, marginBottom: 28 }}>
-              Réglez en Francs CFA via Mobile Money et activez votre accès en quelques instants :
+              Réglez en Francs CFA via Mobile Money. Votre crédit est ajouté après validation du paiement :
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
               <div style={{ padding: 20, borderRadius: 12, background: 'var(--axis-bg)', border: '1px solid var(--axis-border)' }}>
@@ -190,7 +161,7 @@ export const LandingPage = () => {
         <div style={{ display: 'flex', gap: 20, fontSize: 12 }}>
           <span>1 500 à 30 000 XOF</span>
           <span>Mobile Money</span>
-          <span>30 jours</span>
+          <span>Crédit sans échéance</span>
         </div>
       </footer>
     </div>

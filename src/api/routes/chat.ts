@@ -1,6 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
 import { hashApiKey, validateWithGatekeeper, settleUsage, supabase } from '../../db/supabase.js';
-import { resolveAxisRoute, estimateTokens } from '../../router/axis-auto.js';
+import { resolveAxisRoute, estimateTokens, ModelMetadata } from '../../router/axis-auto.js';
 import { executeCompletionWithFallback, executeStreamingCompletion } from '../../openrouter/client.js';
 import { config } from '../../config/env.js';
 
@@ -39,27 +39,94 @@ export const chatRoutes: FastifyPluginAsync = async (fastify) => {
     const isStream = Boolean(body.stream);
     const maxTokens = body.max_tokens || body.max_completion_tokens || config.defaultMaxOutputTokens;
 
-    // 3. Récupération du palier de l'utilisateur pour le routage intelligent
+    // 3. Lecture du crédit initial associé au pack de la clé.
     let userTierNumber = 1;
-    try {
-      const { data: keyData } = await supabase
-        .from('api_keys')
-        .select('subscription_id, subscriptions(tier_number)')
-        .eq('key_hash', keyHash)
-        .maybeSingle();
+    let packCreditUsd: number | undefined;
+    const { data: keyData, error: keyLookupError } = await supabase
+      .from('api_keys')
+      .select('is_enabled, subscription_id, subscriptions(tier_number, budget_amount_usd)')
+      .eq('key_hash', keyHash)
+      .maybeSingle();
 
-      const sub = keyData?.subscriptions as any;
-      if (sub?.tier_number) {
-        userTierNumber = sub.tier_number;
-      }
-    } catch {
-      // Valeur par défaut : palier 1
-      userTierNumber = 1;
+    if (keyLookupError) {
+      request.log.error(keyLookupError, 'Unable to load the API key pack');
+      return reply.status(503).send({
+        error: { message: 'Impossible de charger le pack associé à cette clé.', code: 'PACK_LOOKUP_FAILED' },
+      });
+    }
+    if (!keyData) {
+      return reply.status(401).send({
+        error: { message: 'Clé API introuvable.', code: 'INVALID_API_KEY' },
+      });
+    }
+    if (!keyData.is_enabled) {
+      return reply.status(403).send({
+        error: { message: 'Clé API désactivée.', code: 'KEY_DISABLED' },
+      });
+    }
+    if (!keyData.subscription_id) {
+      return reply.status(402).send({
+        error: { message: 'Un pack actif est requis pour utiliser cette clé.', code: 'NO_SUBSCRIPTION' },
+      });
     }
 
-    // 4. Routage intelligent Axis Auto (Flux en 2 étapes : Décision puis Exécution)
-    const route = resolveAxisRoute(requestedModel, body.messages, userTierNumber, body.tools);
+    const subscription = Array.isArray(keyData?.subscriptions)
+      ? keyData.subscriptions[0]
+      : keyData?.subscriptions;
+    if (subscription?.tier_number) userTierNumber = Number(subscription.tier_number);
+    if (subscription?.budget_amount_usd != null) packCreditUsd = Number(subscription.budget_amount_usd);
+
+    const maxAllowedModelCost = packCreditUsd !== undefined ? packCreditUsd / 40 : 0;
+    const { data: dbModels, error: modelsError } = await supabase
+      .from('models')
+      .select('id, name, input_cost_per_token, output_cost_per_token, fallback_model_id, power_level')
+      .eq('is_active', true);
+
+    if (modelsError) {
+      request.log.error(modelsError, 'Unable to load the model catalog');
+      return reply.status(503).send({
+        error: { message: 'Le catalogue Axis est temporairement indisponible.', code: 'MODEL_CATALOG_UNAVAILABLE' },
+      });
+    }
+
+    const eligibleModels: ModelMetadata[] = (dbModels || [])
+      .map((model: any) => {
+        const inputCost = Number(model.input_cost_per_token || 0);
+        const outputCost = Number(model.output_cost_per_token || 0);
+        const isFree = inputCost === 0 && outputCost === 0;
+        const combinedCostPerMillion = (inputCost + outputCost) * 1_000_000;
+        return {
+          id: model.id,
+          name: model.name || model.id,
+          powerLevel: model.power_level === 'low' || model.power_level === 'medium' ? model.power_level : 'high',
+          combinedCostPerMillion,
+          inputCostPerToken: inputCost,
+          outputCostPerToken: outputCost,
+          isFree,
+          fallbackModelId: model.fallback_model_id || undefined,
+        };
+      })
+      .filter((model) => !model.isFree && model.combinedCostPerMillion <= maxAllowedModelCost);
+
+    // 4. Routage dynamique dans le catalogue autorisé par le crédit du pack.
+    const route = resolveAxisRoute(
+      requestedModel,
+      body.messages,
+      userTierNumber,
+      body.tools,
+      eligibleModels,
+      packCreditUsd || 0,
+    );
     const estimatedInputTokens = estimateTokens(body.messages);
+
+    if (!route.targetModel) {
+      return reply.status(403).send({
+        error: {
+          message: 'Aucun modèle payant du catalogue ne peut atteindre le seuil de 40 millions de tokens avec le crédit de ce pack.',
+          code: 'NO_MODELS_FOR_PACK',
+        },
+      });
+    }
 
     // 5. Validation atomique Gatekeeper via procédure RPC PostgreSQL pure
     const gatekeeperResult = await validateWithGatekeeper(
@@ -84,10 +151,8 @@ export const chatRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     // 6. Chaîne de secours
-    const candidateModels = [
-      ...(gatekeeperResult.fallback_model_id ? [gatekeeperResult.fallback_model_id] : []),
-      ...route.fallbackChain,
-    ];
+    const eligibleModelIds = new Set(eligibleModels.map((model) => model.id));
+    const candidateModels = route.fallbackChain.filter((modelId) => eligibleModelIds.has(modelId));
 
     const openRouterPayload = {
       ...body,

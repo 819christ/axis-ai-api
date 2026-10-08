@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  RefreshCw, CreditCard, Layers, Key, ArrowRight, CalendarDays,
-  Zap, Timer, Hourglass, AlertTriangle,
+  RefreshCw, CreditCard, Layers, Key, ArrowRight,
+  Zap, Hourglass,
 } from 'lucide-react';
-import { Modal } from '../components/Modal';
 import { useMySubscriptions } from '../hooks/useMySubscriptions';
 import {
-  TIERS_NAMES, SUB_STATUS, isPendingStatus, daysRemaining, usagePct, periodPct, fmtDate,
+  SUB_STATUS, isPendingStatus, usagePct, fmtDate, packName,
 } from '../lib/subscriptionUtils';
 
 const usageColor = (p) => (p >= 100 ? 'var(--axis-danger)' : p >= 80 ? 'var(--axis-warning)' : 'var(--axis-accent)');
@@ -38,7 +37,6 @@ export const MySubscriptionsPage = () => {
   const [searchParams] = useSearchParams();
   const focusedSubId = searchParams.get('focus');
   const { subscriptions, loading, refresh, keyForSub } = useMySubscriptions();
-  const [alertDismissed, setAlertDismissed] = useState(false);
 
   // Un lien ?focus=<id> vers une demande en attente relève de la page Paiements
   useEffect(() => {
@@ -50,8 +48,6 @@ export const MySubscriptionsPage = () => {
   const current = subscriptions.filter((s) => s.status === 'active');
   const past = subscriptions.filter((s) => !isPendingStatus(s) && s.status !== 'active');
   const main = current[0];
-  const mainDays = main ? daysRemaining(main.expires_at) : null;
-  const renewalAlert = main && mainDays !== null && mainDays >= 0 && mainDays <= 7 ? main : null;
 
   return (
     <div style={{ maxWidth: 1040, margin: '0 auto', paddingBottom: 60 }}>
@@ -59,7 +55,7 @@ export const MySubscriptionsPage = () => {
         <div>
           <h1 style={{ fontSize: 26, fontWeight: 800 }}>Mes abonnements</h1>
           <p style={{ color: 'var(--axis-textMuted)', fontSize: 13, marginTop: 2 }}>
-            Suivez la consommation, l'échéance et la clé associée à chacun de vos packs.
+            Suivez votre crédit pay-as-you-go et les clés associées à vos packs.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
@@ -93,7 +89,7 @@ export const MySubscriptionsPage = () => {
           <Layers size={40} color="var(--axis-muted)" style={{ margin: '0 auto 16px' }} />
           <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Aucun abonnement actif</h3>
           <p style={{ color: 'var(--axis-textMuted)', fontSize: 13, marginBottom: 20 }}>
-            Créez une clé API puis souscrivez à l'un de nos 7 paliers (dès 1 500 FCFA) pour activer vos accès aux modèles.
+            Choisissez un pack parmi nos 9 offres. Le crédit reste disponible sans échéance et s’utilise jusqu’à épuisement.
           </p>
           <Link to="/dashboard/subscriptions" className="btn-primary" style={{ fontSize: 13 }}>Découvrir les paliers <ArrowRight size={14} /></Link>
         </div>
@@ -101,15 +97,14 @@ export const MySubscriptionsPage = () => {
         <>
           {main && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14, marginBottom: 22 }}>
-              <Stat label="Pack en cours" value={`Palier ${main.tier_number} — ${TIERS_NAMES[main.tier_number] || ''}`} color="var(--axis-accent)" />
-              <Stat label="Jours restants" value={mainDays > 0 ? `${mainDays} jour${mainDays > 1 ? 's' : ''}` : 'Expiré'} color={mainDays <= 7 ? 'var(--axis-warning)' : undefined} />
-              <Stat label="Consommation" value={`${usagePct(main).toFixed(1)} %`} color={usageColor(usagePct(main))} />
+              <Stat label="Pack actif" value={packName(main)} color="var(--axis-accent)" />
+              <Stat label="Crédit disponible" value={`$${Number(main.balance_usd || 0).toFixed(2)}`} />
+              <Stat label="Crédit consommé" value={`${usagePct(main).toFixed(1)} %`} color={usageColor(usagePct(main))} />
             </div>
           )}
 
           {current.map((sub) => {
             const usage = usagePct(sub);
-            const days = daysRemaining(sub.expires_at);
             const linked = keyForSub(sub.id);
             return (
               <div key={sub.id} className="card" style={{ padding: 24, marginBottom: 18, border: '1px solid rgba(132,204,22,0.4)', background: 'linear-gradient(180deg, rgba(132,204,22,0.03) 0%, var(--axis-sidebar) 100%)', outline: focusedSubId === sub.id ? '2px solid var(--axis-accent)' : 'none', outlineOffset: -2 }}>
@@ -118,22 +113,19 @@ export const MySubscriptionsPage = () => {
                     <div style={{ width: 46, height: 46, borderRadius: 12, background: 'var(--axis-accent-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 18, color: 'var(--axis-accent)' }}>P{sub.tier_number}</div>
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <h3 style={{ fontSize: 18, fontWeight: 800 }}>Palier {sub.tier_number} — {TIERS_NAMES[sub.tier_number]}</h3>
+                        <h3 style={{ fontSize: 18, fontWeight: 800 }}>{packName(sub)}</h3>
                         <span className="badge badge-green">Actif</span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--axis-muted)', marginTop: 5 }}>
-                        <CalendarDays size={13} /> Du {fmtDate(sub.starts_at)} au {fmtDate(sub.expires_at)}
+                        <span>Activé le {fmtDate(sub.starts_at)} · sans échéance</span>
                       </div>
                     </div>
                   </div>
-                  {days !== null && days <= 7 && (
-                    <Link to="/dashboard/subscriptions" className="btn-primary" style={{ fontSize: 12, padding: '7px 14px' }}>Renouveler mon pack</Link>
-                  )}
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14, marginBottom: 14 }}>
-                  <Meter icon={Zap} label="Modèles limités :" value={`${usage.toFixed(1)} %`} pct={usage} color={usageColor(usage)} hint="Illimité jusqu'à la fin du mois" />
-                  <Meter icon={Timer} label="Période écoulée :" value={days > 0 ? `${days} j restants` : 'Terminée'} pct={periodPct(sub)} color={days <= 7 ? 'var(--axis-warning)' : 'var(--axis-accent)'} />
+                  <Meter icon={Zap} label="Crédit consommé :" value={`${usage.toFixed(1)} %`} pct={usage} color={usageColor(usage)} hint={`$${Number(sub.consumed_usd || 0).toFixed(4)} utilisés`} />
+                  <Meter icon={CreditCard} label="Crédit restant :" value={`$${Number(sub.balance_usd || 0).toFixed(4)}`} pct={100 - usage} color={usageColor(usage)} hint="Rechargez à tout moment" />
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 10, background: 'var(--axis-bg)', border: '1px solid var(--axis-border)' }}>
@@ -167,12 +159,12 @@ export const MySubscriptionsPage = () => {
                       const st = SUB_STATUS[sub.status] || { label: sub.status, badge: 'badge-gray' };
                       return (
                         <tr key={sub.id} style={focusedSubId === sub.id ? { background: 'var(--axis-hover)' } : undefined}>
-                          <td style={{ fontWeight: 700 }}>P{sub.tier_number} — {TIERS_NAMES[sub.tier_number]}</td>
-                          <td style={{ fontSize: 12.5, color: 'var(--axis-textMuted)' }}>{fmtDate(sub.starts_at, { day: '2-digit', month: 'short', year: 'numeric' })} → {fmtDate(sub.expires_at, { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                          <td style={{ fontWeight: 700 }}>{packName(sub)}</td>
+                          <td style={{ fontSize: 12.5, color: 'var(--axis-textMuted)' }}>Activé le {fmtDate(sub.starts_at, { day: '2-digit', month: 'short', year: 'numeric' })}</td>
                           <td style={{ fontWeight: 600 }}>{usagePct(sub).toFixed(1)} %</td>
                           <td><span className={`badge ${st.badge}`} title={sub.disabled_reason || undefined}>{st.label}</span></td>
                           <td style={{ textAlign: 'right' }}>
-                            <Link to="/dashboard/subscriptions" className="btn-ghost" style={{ fontSize: 12, padding: '5px 12px' }}>Renouveler</Link>
+                            <Link to="/dashboard/subscriptions" className="btn-ghost" style={{ fontSize: 12, padding: '5px 12px' }}>Choisir un pack</Link>
                           </td>
                         </tr>
                       );
@@ -185,23 +177,6 @@ export const MySubscriptionsPage = () => {
         </>
       )}
 
-      <Modal isOpen={!!renewalAlert && !alertDismissed} onClose={() => setAlertDismissed(true)} title="⏰ Renouvellement disponible">
-        {renewalAlert && (
-          <div>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '14px 16px', borderRadius: 10, background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.3)', marginBottom: 20 }}>
-              <AlertTriangle size={20} color="var(--axis-warning)" style={{ flexShrink: 0, marginTop: 2 }} />
-              <div style={{ fontSize: 13, lineHeight: 1.6 }}>
-                Votre abonnement <b>Palier {renewalAlert.tier_number} — {TIERS_NAMES[renewalAlert.tier_number]}</b> expire dans <b>{mainDays} jour(s)</b>.
-                À l'issue des 30 jours, vos clés API associées seront suspendues.
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button type="button" onClick={() => setAlertDismissed(true)} className="btn-ghost" style={{ flex: 1 }}>Plus tard</button>
-              <Link to="/dashboard/subscriptions" className="btn-primary" style={{ flex: 2, textAlign: 'center', textDecoration: 'none' }}>Renouveler mon pack</Link>
-            </div>
-          </div>
-        )}
-      </Modal>
     </div>
   );
 };

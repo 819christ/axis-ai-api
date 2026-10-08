@@ -5,7 +5,6 @@ import { Modal } from '../components/Modal';
 import { Link } from 'react-router-dom';
 import { Key, ArrowRight, RefreshCw, Sparkles, Layers, CreditCard, History, Plus, ShieldCheck } from 'lucide-react';
 
-const TIERS_NAMES = { 1: 'Starter', 2: 'Basic', 3: 'Standard', 4: 'Pro', 5: 'Expert', 6: 'Master', 7: 'Enterprise' };
 const daysLeft = (exp) => exp ? Math.max(0, Math.ceil((new Date(exp) - new Date()) / 86400000)) : null;
 
 export const Dashboard = () => {
@@ -155,9 +154,10 @@ export const Dashboard = () => {
                     P{sub.tier_number}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: 13.5 }}>Palier {sub.tier_number} — {TIERS_NAMES[sub.tier_number] || ''}</div>
+                    <div style={{ fontWeight: 700, fontSize: 13.5 }}>{sub.package_name || `Pack ${sub.tier_number}`}</div>
                     <div style={{ fontSize: 11, color: 'var(--axis-muted)' }}>
-                      {sub.expires_at ? `Échéance ${new Date(sub.expires_at).toLocaleDateString('fr-FR')}` : ''}
+                      {sub.expires_at ? `Échéance ${new Date(sub.expires_at).toLocaleDateString('fr-FR')}` : 'Crédit sans échéance'}
+                      {' · '}${Number(sub.balance_usd || 0).toFixed(2)} / ${Number(sub.budget_amount_usd || 0).toFixed(2)} restants
                       {isActive && d !== null ? ` · ${d} j restants` : ''}
                     </div>
                   </div>
@@ -197,4 +197,3 @@ export const Dashboard = () => {
     </div>
   );
 };
-

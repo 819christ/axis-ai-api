@@ -6,7 +6,7 @@ import { useToast } from '../components/Toast';
 import { Modal } from '../components/Modal';
 import { useMySubscriptions } from '../hooks/useMySubscriptions';
 import {
-  TIERS_NAMES, TIERS_XOF, WA_NUMBER, PAYMENT_STATUS, fmtDate, fmtTime, fmtXof,
+  packName, packPriceXof, WA_NUMBER, PAYMENT_STATUS, fmtDate, fmtTime, fmtXof,
 } from '../lib/subscriptionUtils';
 
 const FILTERS = [
@@ -70,7 +70,7 @@ export const PaymentsPage = () => {
 
   const rows = subscriptions.filter(FILTERS.find((f) => f.id === filter).test);
   const waiting = subscriptions.filter(FILTERS[1].test).length;
-  const validatedTotal = subscriptions.filter(FILTERS[2].test).reduce((sum, s) => sum + (TIERS_XOF[s.tier_number] || 0), 0);
+  const validatedTotal = subscriptions.filter(FILTERS[2].test).reduce((sum, s) => sum + packPriceXof(s), 0);
 
   const handleLinkModerator = async (e) => {
     e.preventDefault();
@@ -150,10 +150,10 @@ export const PaymentsPage = () => {
                     <div style={{ fontSize: 11, color: 'var(--axis-muted)' }}>{fmtTime(sub.created_at)}{sub.moderator_code_used ? ` · ${sub.moderator_code_used}` : ''}</div>
                   </td>
                   <td>
-                    <div style={{ fontWeight: 700 }}>P{sub.tier_number} — {TIERS_NAMES[sub.tier_number]}</div>
+                    <div style={{ fontWeight: 700 }}>{packName(sub)}</div>
                     <div style={{ fontSize: 11, color: 'var(--axis-muted)' }}>{key ? `Clé : ${key.name || key.key_prefix}` : 'Aucune clé liée'}</div>
                   </td>
-                  <td style={{ fontWeight: 700 }}>{fmtXof(TIERS_XOF[sub.tier_number])}</td>
+                  <td style={{ fontWeight: 700 }}>{fmtXof(packPriceXof(sub))}</td>
                   <td>
                     <div style={{ marginBottom: 8 }}><span className={`badge ${st.badge}`}>{st.label}</span></div>
                     <Stepper sub={sub} />
@@ -161,7 +161,7 @@ export const PaymentsPage = () => {
                   <td style={{ textAlign: 'right' }}>
                     {sub.status === 'pending_validation' ? (
                       <div style={{ display: 'inline-flex', gap: 8 }}>
-                        <a href={`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(`Bonjour Axis AI 👋\nJe souhaite valider mon abonnement Palier ${sub.tier_number} (${fmtXof(TIERS_XOF[sub.tier_number])}).`)}`} target="_blank" rel="noreferrer" className="btn-ghost" style={{ fontSize: 12, padding: '6px 10px', color: '#25D366' }} title="Contacter l'admin sur WhatsApp">
+                        <a href={`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(`Bonjour Axis AI 👋\nJe souhaite valider mon pack ${packName(sub)} (${fmtXof(packPriceXof(sub))}).`)}`} target="_blank" rel="noreferrer" className="btn-ghost" style={{ fontSize: 12, padding: '6px 10px', color: '#25D366' }} title="Contacter l'admin sur WhatsApp">
                           <MessageCircle size={14} />
                         </a>
                         <button onClick={() => { setSelectedSub(sub); setModCode(''); }} className="btn-primary" style={{ fontSize: 12, padding: '6px 12px' }}>
@@ -190,8 +190,8 @@ export const PaymentsPage = () => {
           <form onSubmit={handleLinkModerator}>
             <div style={{ padding: '14px 16px', borderRadius: 10, background: 'var(--axis-bg)', border: '1px solid var(--axis-border)', marginBottom: 20 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                <span style={{ fontWeight: 700, fontSize: 15 }}>Palier {selectedSub.tier_number} — {TIERS_NAMES[selectedSub.tier_number]}</span>
-                <span style={{ fontWeight: 900, fontSize: 18, color: 'var(--axis-accent)' }}>{fmtXof(TIERS_XOF[selectedSub.tier_number])}</span>
+                <span style={{ fontWeight: 700, fontSize: 15 }}>{packName(selectedSub)}</span>
+                <span style={{ fontWeight: 900, fontSize: 18, color: 'var(--axis-accent)' }}>{fmtXof(packPriceXof(selectedSub))}</span>
               </div>
               <div style={{ fontSize: 12, color: 'var(--axis-muted)', marginTop: 4 }}>Demande du {fmtDate(selectedSub.created_at)}</div>
             </div>
