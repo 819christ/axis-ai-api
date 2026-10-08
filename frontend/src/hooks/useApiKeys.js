@@ -74,10 +74,15 @@ export const useApiKeys = () => {
       if (subscriptionId && !isKeyEnabled) {
         const { data: sub } = await supabase
           .from('subscriptions')
-          .select('status, is_active, expires_at')
+          .select('status, is_active, expires_at, balance_usd')
           .eq('id', subscriptionId)
           .maybeSingle();
-        if (sub) isKeyEnabled = (sub.status === 'active' && sub.is_active === true && new Date(sub.expires_at) > new Date());
+        if (sub) isKeyEnabled = (
+          sub.status === 'active'
+          && sub.is_active === true
+          && (!sub.expires_at || new Date(sub.expires_at) > new Date())
+          && Number(sub.balance_usd) > 0
+        );
       }
 
       const { data: insertedKey, error: insertError } = await supabase
@@ -142,11 +147,14 @@ export const useApiKeys = () => {
     // Lire le statut réel de l'abonnement — ne pas deviner
     const { data: sub } = await supabase
       .from('subscriptions')
-      .select('status, is_active, expires_at')
+      .select('status, is_active, expires_at, balance_usd')
       .eq('id', subscriptionId)
       .maybeSingle();
 
-    const subIsLive = sub?.status === 'active' && sub?.is_active === true && new Date(sub.expires_at) > new Date();
+    const subIsLive = sub?.status === 'active'
+      && sub?.is_active === true
+      && (!sub.expires_at || new Date(sub.expires_at) > new Date())
+      && Number(sub.balance_usd) > 0;
 
     const { error } = await supabase
       .from('api_keys')

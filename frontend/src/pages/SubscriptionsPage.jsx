@@ -1,469 +1,420 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import {
+  ArrowDown, ArrowRight, Check, ChevronDown, ChevronUp, CircleDollarSign,
+  Cpu, Key, MessageCircle, Search, Shield, Sparkles, Wallet, Zap,
+} from 'lucide-react';
 import { useSubscription } from '../hooks/useSubscription';
 import { useApiKeys } from '../hooks/useApiKeys';
 import { useToast } from '../components/Toast';
 import { Modal } from '../components/Modal';
-import { ChevronDown, ChevronUp, Shield, MessageCircle, Sparkles, Search, Cpu, Key } from 'lucide-react';
-import { useNavigate, useLocation } from 'react-router-dom';
-
-
-const TIERS = [
-  { id: 1, name: 'Starter',    priceXof: '1 500',  priceUsd: 2.50,  maxCost: 5.00  },
-  { id: 2, name: 'Basic',      priceXof: '3 000',  priceUsd: 5.00,  maxCost: 10.00 },
-  { id: 3, name: 'Standard',   priceXof: '6 000',  priceUsd: 10.00, maxCost: 15.00 },
-  { id: 4, name: 'Pro',        priceXof: '12 000', priceUsd: 20.00, maxCost: 20.00, popular: true },
-  { id: 5, name: 'Expert',     priceXof: '18 000', priceUsd: 30.00, maxCost: 25.00 },
-  { id: 6, name: 'Master',     priceXof: '24 000', priceUsd: 40.00, maxCost: 30.00 },
-  { id: 7, name: 'Enterprise', priceXof: '30 000', priceUsd: 50.00, maxCost: 35.00 },
-];
+import { supabase } from '../supabase';
 
 const WA_NUMBER = '0166518473';
+const MODEL_COST_PER_TOKEN = (model) =>
+  Number(model.input_cost_per_token || 0) + Number(model.output_cost_per_token || 0);
 
-// Récupère les modèles OpenRouter et les classe gratuits/payants selon le plafond du palier
-async function fetchOpenRouterModels() {
-  const res = await fetch('https://openrouter.ai/api/v1/models');
-  if (!res.ok) throw new Error('Requête OpenRouter échouée');
-  const json = await res.json();
-  return json.data || [];
-}
+const formatXof = (amount) => `${Number(amount).toLocaleString('fr-FR')} FCFA`;
+const formatUsd = (amount) => `$${Number(amount).toFixed(2)} USD`;
+const estimatedTokens = (credit, model) => {
+  const cost = MODEL_COST_PER_TOKEN(model);
+  return cost > 0 ? Math.floor(Number(credit) / cost) : null;
+};
 
-function TierCard({ tier, subscription, pendingSub, onSubscribe, openRouterModels, modelsLoading }) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterMode, setFilterMode] = useState('all'); // 'all' | 'unlimited' | 'limited'
+const tierForModel = (models, model) => {
+  if (models.length <= 1) return 'low';
+  const index = models.findIndex((item) => item.id === model.id);
+  const position = index / (models.length - 1);
+  if (position < 1 / 3) return 'low';
+  if (position < 2 / 3) return 'medium';
+  return 'high';
+};
 
-  const { freeModels, paidModels } = useMemo(() => {
-    const free = [], paid = [];
-    for (const m of openRouterModels) {
-      const inp = parseFloat(m.pricing?.prompt || 0) * 1_000_000;
-      const out = parseFloat(m.pricing?.completion || 0) * 1_000_000;
-      const combined = inp + out;
-      if (combined > tier.maxCost) continue;
-      if (combined === 0) free.push(m);
-      else paid.push(m);
-    }
-    return { freeModels: free, paidModels: paid };
-  }, [openRouterModels, tier.maxCost]);
+const POWER_LABELS = { low: 'Low · économique', medium: 'Medium · équilibré', high: 'High · puissant' };
+const FAMILIES = [
+  {
+    id: 1,
+    name: 'Étudiant & Découverte',
+    subtitle: 'Petits workflows et complétion',
+    description: 'Pour rédiger, résumer, traduire et tester de petits scripts.',
+    color: 'var(--axis-accent)',
+  },
+  {
+    id: 2,
+    name: 'Pro & Automatisation',
+    subtitle: 'Workflows et agents simples',
+    description: 'Pour coder, automatiser et construire des mini-agents.',
+    color: 'var(--axis-purple)',
+  },
+  {
+    id: 3,
+    name: 'Entreprise & Scale',
+    subtitle: 'Production intensive',
+    description: 'Pour les agents soutenus et les requêtes complexes.',
+    color: '#60a5fa',
+  },
+];
 
-  // Modèles filtrés selon recherche et mode (tous / illimités / limités)
-  const filteredList = useMemo(() => {
-    let list = [];
-    if (filterMode === 'all') {
-      list = [...freeModels.map(m => ({ ...m, isUnlimited: true })), ...paidModels.map(m => ({ ...m, isUnlimited: false }))];
-    } else if (filterMode === 'unlimited') {
-      list = freeModels.map(m => ({ ...m, isUnlimited: true }));
-    } else {
-      list = paidModels.map(m => ({ ...m, isUnlimited: false }));
-    }
+function PackCard({ pack, models, loading, onBuy, isExpanded, onToggle }) {
+  const [query, setQuery] = useState('');
+  const eligibleModels = useMemo(() => {
+    const maxCostPerMillion = Number(pack.credit_usd) / 40;
+    return models
+      .filter((model) => {
+        const price = MODEL_COST_PER_TOKEN(model);
+        return price > 0 && price * 1_000_000 <= maxCostPerMillion;
+      })
+      .sort((a, b) => MODEL_COST_PER_TOKEN(a) - MODEL_COST_PER_TOKEN(b));
+  }, [models, pack.credit_usd]);
 
-    if (!searchQuery.trim()) return list;
-    const q = searchQuery.toLowerCase().trim();
-    return list.filter(m => (m.name || '').toLowerCase().includes(q) || (m.id || '').toLowerCase().includes(q));
-  }, [freeModels, paidModels, filterMode, searchQuery]);
-
-  const totalModels = paidModels.length + freeModels.length;
-  const isCurrent = subscription?.tier_number === tier.id && subscription?.status === 'active';
-  // L'indicateur « En attente » n'existe que pour la clé choisie (pendingSub = abonnement en attente lié à cette clé)
-  const isPending = Boolean(pendingSub) && pendingSub.tier_number === tier.id;
+  const testModels = useMemo(
+    () => models.filter((model) => MODEL_COST_PER_TOKEN(model) === 0),
+    [models],
+  );
+  const filteredModels = useMemo(() => {
+    const search = query.trim().toLowerCase();
+    return search
+      ? eligibleModels.filter((model) =>
+          `${model.name} ${model.id}`.toLowerCase().includes(search),
+        )
+      : eligibleModels;
+  }, [eligibleModels, query]);
+  const powerCounts = eligibleModels.reduce((counts, model) => {
+    const power = tierForModel(eligibleModels, model);
+    counts[power] += 1;
+    return counts;
+  }, { low: 0, medium: 0, high: 0 });
 
   return (
-    <div className="card card-hover" style={{
-      border: isCurrent ? '2px solid var(--axis-accent)' : isPending ? '2px solid var(--axis-warning)' : tier.popular ? '2px solid rgba(132,204,22,0.4)' : '1px solid var(--axis-border)',
-      display: 'flex', flexDirection: 'column', position: 'relative'
+    <article className="card card-hover" style={{
+      display: 'flex',
+      flexDirection: 'column',
+      borderTop: `3px solid ${FAMILIES[pack.tier_number - 1]?.color || 'var(--axis-accent)'}`,
+      minWidth: 0,
     }}>
-      {isCurrent  && <span className="badge badge-green"  style={{ position: 'absolute', top: -12, right: 16 }}>Pack Actif</span>}
-      {isPending  && <span className="badge badge-yellow" style={{ position: 'absolute', top: -12, right: 16 }}>En attente</span>}
-      {tier.popular && !isCurrent && !isPending && <span className="badge badge-purple" style={{ position: 'absolute', top: -12, right: 16 }}>Populaire</span>}
-
-      {/* Prix */}
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-          <h3 style={{ fontSize: 20, fontWeight: 700 }}>Palier {tier.id}</h3>
-          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--axis-accent)' }}>{tier.name}</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+        <div>
+          <span className="badge badge-gray" style={{ marginBottom: 8 }}>
+            PACK {String(pack.sort_order).padStart(2, '0')}
+          </span>
+          <h3 style={{ fontSize: 18, fontWeight: 800 }}>{pack.name}</h3>
         </div>
-        <div style={{ fontSize: 30, fontWeight: 900, marginTop: 4 }}>
-          {tier.priceXof} <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--axis-accent)' }}>FCFA</span>
-        </div>
-        <div style={{ color: 'var(--axis-textMuted)', fontSize: 12 }}>Durée : 30 jours</div>
+        <Sparkles size={19} color={FAMILIES[pack.tier_number - 1]?.color || 'var(--axis-accent)'} />
       </div>
 
-      {/* Compteurs modèles */}
-      <div style={{ borderTop: '1px solid var(--axis-border)', paddingTop: 12, marginBottom: 14, fontSize: 12.5, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {modelsLoading ? (
-          <div style={{ color: 'var(--axis-muted)' }}>Calcul des modèles...</div>
-        ) : (
-          <>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--axis-textMuted)' }}>Modèles disponibles dans ce palier :</span>
-              <b style={{ color: 'var(--axis-text)' }}>{totalModels} modèle{totalModels > 1 ? 's' : ''}</b>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--axis-textMuted)' }}>Modèles limités :</span>
-              <b style={{ color: 'var(--axis-text)' }}>{paidModels.length}</b>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--axis-textMuted)' }}>Modèles illimités :</span>
-              <b style={{ color: '#60a5fa' }}>{freeModels.length}</b>
-            </div>
-          </>
-        )}
+      <p style={{ minHeight: 40, marginTop: 8, color: 'var(--axis-textMuted)', fontSize: 12.5, lineHeight: 1.6 }}>
+        {pack.description}
+      </p>
+
+      <div style={{
+        display: 'flex', alignItems: 'end', justifyContent: 'space-between',
+        gap: 8, padding: '16px 0', marginTop: 8,
+        borderTop: '1px solid var(--axis-border)', borderBottom: '1px solid var(--axis-border)',
+      }}>
+        <div>
+          <div style={{ fontSize: 25, fontWeight: 900 }}>{formatXof(pack.price_xof)}</div>
+          <div style={{ fontSize: 11, color: 'var(--axis-muted)' }}>Paiement unique · sans expiration</div>
+        </div>
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'flex-end', color: 'var(--axis-accent)', fontSize: 14, fontWeight: 800 }}>
+            <Wallet size={15} /> {formatUsd(pack.credit_usd)}
+          </div>
+          <div style={{ fontSize: 10.5, color: 'var(--axis-muted)' }}>crédit après validation</div>
+        </div>
       </div>
 
-      {/* Accordion zone stylisée des modèles */}
-      <div style={{ borderTop: '1px solid var(--axis-border)', paddingTop: 12, marginBottom: 16 }}>
-        {/* Trigger button ergonomique et soigné */}
-        <button
-          type="button"
-          onClick={() => setIsExpanded(v => !v)}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            width: '100%', padding: '10px 14px', borderRadius: 10,
-            background: isExpanded ? 'var(--axis-hover)' : 'rgba(255,255,255,0.03)',
-            border: isExpanded ? '1px solid var(--axis-accent)' : '1px solid var(--axis-border)',
-            color: 'var(--axis-text)', cursor: 'pointer', transition: 'all 0.2s ease',
-          }}
-          onMouseEnter={e => { if (!isExpanded) e.currentTarget.style.borderColor = 'rgba(132,204,22,0.4)'; }}
-          onMouseLeave={e => { if (!isExpanded) e.currentTarget.style.borderColor = 'var(--axis-border)'; }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Cpu size={15} color="var(--axis-accent)" />
-            <span style={{ fontSize: 13, fontWeight: 600 }}>Modèles du palier</span>
-            <span style={{
-              fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
-              background: 'rgba(255,255,255,0.06)', color: 'var(--axis-textMuted)'
-            }}>
-              {modelsLoading ? '...' : totalModels}
+      <div style={{ margin: '14px 0', padding: '11px 12px', borderRadius: 10, background: 'var(--axis-bg)', fontSize: 11.5 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+          <span style={{ color: 'var(--axis-textMuted)' }}>Modèles payants compatibles</span>
+          <b>{loading ? '…' : eligibleModels.length}</b>
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 9 }}>
+          {(['low', 'medium', 'high']).map((power) => (
+            <span key={power} className="badge badge-gray" style={{ fontSize: 9, padding: '3px 7px' }}>
+              {power.toUpperCase()} {loading ? '…' : powerCounts[power]}
             </span>
-          </div>
-          {isExpanded ? <ChevronUp size={16} color="var(--axis-accent)" /> : <ChevronDown size={16} color="var(--axis-muted)" />}
-        </button>
-
-        {/* Panneau déroulant stylisé */}
-        {isExpanded && (
-          <div className="ax-fade-in" style={{
-            marginTop: 10, background: 'var(--axis-bg)', borderRadius: 12,
-            border: '1px solid var(--axis-border)', padding: 12, display: 'flex', flexDirection: 'column', gap: 10
-          }}>
-            {/* Barre de recherche instantanée */}
-            <div style={{ position: 'relative' }}>
-              <Search size={14} color="var(--axis-muted)" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
-              <input
-                type="text"
-                placeholder="Filtrer un modèle (ex: llama, deepseek...)"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                style={{
-                  width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--axis-border)',
-                  borderRadius: 8, padding: '7px 10px 7px 30px', fontSize: 12, color: 'var(--axis-text)', outline: 'none'
-                }}
-              />
-            </div>
-
-            {/* Filtres rapides */}
-            <div style={{ display: 'flex', gap: 6 }}>
-              {[
-                { id: 'all', label: `Tous (${totalModels})` },
-                { id: 'unlimited', label: `Illimités (${freeModels.length})` },
-                { id: 'limited', label: `Limités (${paidModels.length})` },
-              ].map(tab => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setFilterMode(tab.id)}
-                  style={{
-                    flex: 1, padding: '4px 6px', borderRadius: 6, fontSize: 10.5, fontWeight: 600,
-                    background: filterMode === tab.id ? 'var(--axis-hover)' : 'transparent',
-                    color: filterMode === tab.id ? '#fff' : 'var(--axis-muted)',
-                    border: filterMode === tab.id ? '1px solid var(--axis-border)' : '1px solid transparent',
-                    cursor: 'pointer', transition: 'all 0.15s ease'
-                  }}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Liste scrollable propre */}
-            <div style={{
-              maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4,
-              paddingRight: 4
-            }}>
-              {modelsLoading ? (
-                <p style={{ color: 'var(--axis-muted)', fontSize: 12, textAlign: 'center', padding: '16px 0' }}>Chargement depuis OpenRouter...</p>
-              ) : filteredList.length === 0 ? (
-                <p style={{ color: 'var(--axis-muted)', fontSize: 12, textAlign: 'center', padding: '16px 0' }}>Aucun modèle correspondant</p>
-              ) : (
-                filteredList.map(m => (
-                  <div
-                    key={m.id}
-                    style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '6px 10px', borderRadius: 8,
-                      background: m.isUnlimited ? 'rgba(59,130,246,0.04)' : 'rgba(255,255,255,0.02)',
-                      border: '1px solid rgba(255,255,255,0.03)',
-                      transition: 'background 0.15s ease'
-                    }}
-                    onMouseEnter={e => e.currentTarget.style.background = m.isUnlimited ? 'rgba(59,130,246,0.1)' : 'var(--axis-hover)'}
-                    onMouseLeave={e => e.currentTarget.style.background = m.isUnlimited ? 'rgba(59,130,246,0.04)' : 'rgba(255,255,255,0.02)'}
-                  >
-                    <div style={{ minWidth: 0, flex: 1, paddingRight: 8 }}>
-                      <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--axis-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {m.name}
-                      </div>
-                      <div style={{ fontSize: 10, color: 'var(--axis-muted)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {m.id}
-                      </div>
-                    </div>
-                    <span className={m.isUnlimited ? 'badge badge-blue' : 'badge badge-gray'} style={{ fontSize: 9, padding: '2px 7px', flexShrink: 0 }}>
-                      {m.isUnlimited ? 'ILLIMITÉ' : 'LIMITÉ'}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        )}
+          ))}
+        </div>
+        <div style={{ color: 'var(--axis-muted)', marginTop: 8, lineHeight: 1.5 }}>
+          Sélectionnés si le crédit permet au moins 40 M de tokens combinés entrée + sortie.
+        </div>
       </div>
 
-      <button
-        onClick={() => !isCurrent && onSubscribe(tier)}
-        className={isCurrent ? "btn-ghost" : "btn-primary"}
-        disabled={isCurrent}
-        style={{ width: '100%', opacity: isCurrent ? 0.6 : 1, marginTop: 'auto' }}
-      >
-        {isCurrent ? 'Pack Actif' : isPending ? 'Demande en cours' : `Souscrire (${tier.priceXof} FCFA)`}
+      <button type="button" onClick={onToggle} className="btn-ghost" style={{ justifyContent: 'space-between', padding: '9px 12px', fontSize: 12 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+          <Cpu size={14} color="var(--axis-accent)" />
+          Catalogue dynamique
+        </span>
+        {isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
       </button>
-    </div>
+
+      {isExpanded && (
+        <div className="ax-fade-in" style={{ marginTop: 10, padding: 10, borderRadius: 10, background: 'var(--axis-bg)', border: '1px solid var(--axis-border)' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <Search size={14} color="var(--axis-muted)" />
+            <input
+              className="input-field"
+              aria-label={`Rechercher un modèle dans ${pack.name}`}
+              placeholder="Rechercher un modèle..."
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              style={{ padding: '7px 9px', fontSize: 11.5 }}
+            />
+          </label>
+          <div style={{ maxHeight: 210, overflowY: 'auto', marginTop: 8 }}>
+            {loading ? (
+              <p style={{ padding: 12, color: 'var(--axis-muted)', fontSize: 12 }}>Chargement du catalogue…</p>
+            ) : filteredModels.length === 0 ? (
+              <p style={{ padding: 12, color: 'var(--axis-muted)', fontSize: 12 }}>Aucun modèle payant ne répond au seuil de ce pack.</p>
+            ) : filteredModels.map((model) => {
+              const costPerMillion = MODEL_COST_PER_TOKEN(model) * 1_000_000;
+              const tokenEstimate = estimatedTokens(pack.credit_usd, model);
+              return (
+                <div key={model.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '8px 4px', borderBottom: '1px solid var(--axis-border)' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 11.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{model.name || model.id}</div>
+                    <div style={{ fontSize: 9.5, color: 'var(--axis-muted)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{model.id}</div>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <span className="badge badge-gray" style={{ fontSize: 8, padding: '2px 6px' }}>{POWER_LABELS[tierForModel(eligibleModels, model)]}</span>
+                    <div style={{ marginTop: 3, color: 'var(--axis-muted)', fontSize: 9.5 }}>
+                      ${costPerMillion.toFixed(4)}/M · ~{(tokenEstimate / 1_000_000).toFixed(1)} M tokens
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {testModels.length > 0 && (
+            <div style={{ padding: '10px 8px 2px', marginTop: 8, borderTop: '1px solid var(--axis-border)', fontSize: 10.5, lineHeight: 1.5 }}>
+              <b style={{ color: 'var(--axis-warning)' }}>Modèles de test · instables</b>
+              <span style={{ color: 'var(--axis-muted)' }}> — {testModels.length} modèle(s), sans débit de crédit Axis ; disponibilité et quotas soumis au fournisseur.</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      <button type="button" className="btn-primary" onClick={onBuy} style={{ width: '100%', marginTop: 16 }}>
+        Choisir ce pack <ArrowRight size={15} />
+      </button>
+    </article>
   );
 }
 
 export const SubscriptionsPage = () => {
-  const { subscription, subscribe, refresh } = useSubscription();
+  const { subscribe, refresh } = useSubscription();
   const { keys, linkKeyToSubscription } = useApiKeys();
-  const [selectedTier, setSelectedTier] = useState(null);
-  const [paymentChoice, setPaymentChoice] = useState(null); // null | 'whatsapp' | 'moderator'
+  const [packs, setPacks] = useState([]);
+  const [models, setModels] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState('');
+  const [expandedPack, setExpandedPack] = useState(null);
+  const [selectedPack, setSelectedPack] = useState(null);
+  const [paymentChoice, setPaymentChoice] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [openRouterModels, setOpenRouterModels] = useState([]);
-  const [modelsLoading, setModelsLoading] = useState(true);
-  const navigate = useNavigate();
   const location = useLocation();
+  const navigate = useNavigate();
   const addToast = useToast();
-
-  // Clé pré-sélectionnée transmise depuis ApiKeysPage
   const [targetKeyId, setTargetKeyId] = useState(
-    location.state?.targetKeyId || new URLSearchParams(location.search).get('key') || null
+    location.state?.targetKeyId || new URLSearchParams(location.search).get('key') || null,
   );
-
-  const targetKey = keys.find(k => k.id === targetKeyId);
-
-  // Abonnement en attente de la clé choisie : sans clé, aucun indicateur « En attente »
-  const keySub = targetKey?.subscriptions;
-  const pendingSub = keySub && ['pending_validation', 'pending'].includes(keySub.status) ? keySub : null;
+  const targetKey = keys.find((key) => key.id === targetKeyId);
 
   useEffect(() => {
-    fetchOpenRouterModels()
-      .then(data => setOpenRouterModels(data))
-      .catch(() => setOpenRouterModels([]))
-      .finally(() => setModelsLoading(false));
+    let cancelled = false;
+    const loadCatalog = async () => {
+      setLoading(true);
+      setCatalogError('');
+      const [packResult, modelResult] = await Promise.all([
+        supabase.from('subscription_packs').select('*').eq('is_active', true).order('sort_order'),
+        supabase.from('models').select('id, name, input_cost_per_token, output_cost_per_token').eq('is_active', true),
+      ]);
+      if (cancelled) return;
+      const error = packResult.error || modelResult.error;
+      if (error) {
+        setCatalogError(error.message || 'Impossible de charger le catalogue des packs.');
+      } else {
+        setPacks(packResult.data || []);
+        setModels(modelResult.data || []);
+      }
+      setLoading(false);
+    };
+    loadCatalog();
+    return () => { cancelled = true; };
   }, []);
 
-  // Création de la souscription et liaison à la clé sélectionnée
-  const handleSubscribeConfirm = async () => {
-    if (!selectedTier || isSubmitting) return;
+  const familyGroups = useMemo(
+    () => FAMILIES.map((family) => ({
+      ...family,
+      packs: packs.filter((pack) => Number(pack.tier_number) === family.id),
+    })),
+    [packs],
+  );
+
+  const submitPackRequest = async () => {
+    if (!selectedPack || isSubmitting) return;
     setIsSubmitting(true);
     try {
-      const { data, error } = await subscribe(selectedTier.id, null);
+      const { data, error } = await subscribe(selectedPack.code);
       if (error) {
-        addToast(error.message || 'Erreur lors de la souscription', 'error');
-        return;
-      }
-      if (data && !data.success) {
-        addToast(data.error_message || 'Souscription rejetée', 'error');
+        addToast(error.message || 'Impossible de créer la demande de pack.', 'error');
         return;
       }
 
-      // Si une clé cible est sélectionnée, on la lie immédiatement à cette souscription
       if (targetKeyId && data?.subscription_id) {
-        await linkKeyToSubscription(targetKeyId, data.subscription_id);
-        addToast(`Demande créée et liée à votre clé ! Retrouvez-la dans l'historique.`, 'success');
+        const { error: linkError } = await linkKeyToSubscription(targetKeyId, data.subscription_id);
+        if (linkError) {
+          addToast(`Demande créée, mais la clé n’a pas pu être associée : ${linkError.message}`, 'warning');
+        } else {
+          addToast('Demande créée et liée à votre clé API.', 'success');
+        }
       } else {
-        addToast('Demande créée ! Retrouvez-la dans votre historique.', 'success');
+        addToast('Demande créée. Le crédit sera disponible après validation du paiement.', 'success');
       }
 
-      refresh();
-
+      await refresh();
       if (paymentChoice === 'whatsapp') {
         const keyInfo = targetKey ? `\n• Clé API : ${targetKey.name} (${targetKey.key_prefix})` : '';
-        const msg = encodeURIComponent(
-          `Bonjour Axis AI 👋\n\nJe viens de soumettre une demande d'abonnement :\n• Palier ${selectedTier.id} — ${selectedTier.name}\n• Montant : ${selectedTier.priceXof} FCFA${keyInfo}\n\nMerci de m'indiquer les coordonnées de paiement Mobile Money.`
+        const message = encodeURIComponent(
+          `Bonjour Axis AI 👋\n\nJe souhaite régler une demande de pack :\n• ${selectedPack.name} — ${selectedPack.family_name}\n• Montant : ${formatXof(selectedPack.price_xof)}\n• Crédit après validation : ${formatUsd(selectedPack.credit_usd)}${keyInfo}\n\nMerci de m'indiquer les coordonnées de paiement Mobile Money.`,
         );
-        window.open(`https://wa.me/${WA_NUMBER}?text=${msg}`, '_blank');
+        window.open(`https://wa.me/${WA_NUMBER}?text=${message}`, '_blank', 'noopener,noreferrer');
       }
 
-      setSelectedTier(null);
+      setSelectedPack(null);
       setPaymentChoice(null);
       setTargetKeyId(null);
-      navigate('/dashboard/history');
-    } catch (err) {
-      addToast(err.message, 'error');
+      navigate('/dashboard/payments');
+    } catch (error) {
+      addToast(error.message || 'Erreur inattendue lors de la création du pack.', 'error');
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-      {/* Bannière principale */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 20px', borderRadius: 12, background: 'linear-gradient(90deg, rgba(132,204,22,0.12) 0%, rgba(192,132,252,0.12) 100%)', border: '1px solid rgba(132,204,22,0.3)', marginBottom: 20 }}>
-        <Sparkles size={16} color="var(--axis-accent)" />
-        <span style={{ fontSize: 13, fontWeight: 700 }}>Axis AI — Première plateforme béninoise d'accès aux modèles d'IA mondiaux en Francs CFA</span>
+    <div style={{ maxWidth: 1240, margin: '0 auto', paddingBottom: 50 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '15px 18px', borderRadius: 14, background: 'linear-gradient(90deg, rgba(132,204,22,0.12), rgba(192,132,252,0.1))', border: '1px solid var(--axis-border)', marginBottom: 24 }}>
+        <CircleDollarSign size={19} color="var(--axis-accent)" />
+        <div style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+          <b>Pay-as-you-go :</b> achetez du crédit USD, utilisez-le sans échéance, puis rechargez lorsque votre solde est épuisé.
+        </div>
       </div>
 
-      {/* Bannière "Clé pré-sélectionnée" si on arrive depuis la page des clés */}
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
+        <div>
+          <h1 style={{ fontSize: 27, fontWeight: 850 }}>Choisissez votre pack</h1>
+          <p style={{ color: 'var(--axis-textMuted)', fontSize: 13, marginTop: 5 }}>
+            3 familles, 9 packs. Chaque pack crédite votre portefeuille après validation du paiement.
+          </p>
+        </div>
+        <Link to="/dashboard/payments" className="btn-ghost" style={{ fontSize: 12.5, padding: '8px 13px' }}>
+          <Wallet size={15} /> Mes demandes
+        </Link>
+      </header>
+
       {targetKey && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 12, padding: '12px 18px', borderRadius: 12,
-          background: 'rgba(132,204,22,0.06)', border: '1px solid rgba(132,204,22,0.35)', marginBottom: 20
-        }}>
-          <Key size={18} color="var(--axis-accent)" style={{ flexShrink: 0 }} />
-          <div style={{ flex: 1, fontSize: 13, lineHeight: 1.5 }}>
-            <b style={{ color: 'var(--axis-accent)' }}>Clé sélectionnée :</b>{' '}
-            <span style={{ fontFamily: 'monospace', background: 'var(--axis-bg)', padding: '1px 6px', borderRadius: 4, border: '1px solid var(--axis-border)' }}>
-              {targetKey.key_prefix}
-            </span>{' '}
-            <b>{targetKey.name}</b> — Choisissez un palier ci-dessous pour y lier votre abonnement.
-          </div>
-          <button onClick={() => setTargetKeyId(null)} style={{ color: 'var(--axis-muted)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>×</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderRadius: 12, background: 'var(--axis-accent-dim)', border: '1px solid var(--axis-border)', marginBottom: 22, fontSize: 12.5 }}>
+          <Key size={17} color="var(--axis-accent)" />
+          <span style={{ flex: 1 }}>Pack associé à <b>{targetKey.name}</b> ({targetKey.key_prefix}) après validation.</span>
+          <button type="button" className="btn-icon" aria-label="Désélectionner la clé" onClick={() => setTargetKeyId(null)}>×</button>
         </div>
       )}
 
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 26, fontWeight: 800 }}>Les 7 Paliers d'Abonnement</h1>
-        <p style={{ color: 'var(--axis-textMuted)', fontSize: 13 }}>
-          De <b>1 500 FCFA</b> à <b>30 000 FCFA</b> pour 30 jours. La liste des modèles disponibles est mise à jour en temps réel.
-        </p>
-      </div>
+      {catalogError && (
+        <div role="alert" style={{ marginBottom: 20, padding: 14, borderRadius: 12, color: 'var(--axis-danger)', background: 'rgba(248,113,113,0.08)', border: '1px solid var(--axis-danger)', fontSize: 13 }}>
+          Catalogue indisponible : {catalogError}
+        </div>
+      )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(310px, 1fr))', gap: 20, marginBottom: 44 }}>
-        {TIERS.map(tier => (
-          <TierCard
-            key={tier.id}
-            tier={tier}
-            subscription={subscription}
-            pendingSub={pendingSub}
-            onSubscribe={t => { setSelectedTier(t); setPaymentChoice(null); }}
-            openRouterModels={openRouterModels}
-            modelsLoading={modelsLoading}
-          />
-        ))}
-      </div>
-
-      {/* Modal Étape 1 : Choix du canal */}
-      <Modal isOpen={!!selectedTier && !paymentChoice} onClose={() => setSelectedTier(null)} title="Choisissez votre canal de paiement">
-        {selectedTier && (
-          <div>
-            <div style={{ background: 'var(--axis-bg)', padding: '14px 18px', borderRadius: 12, marginBottom: 24, border: '1px solid var(--axis-border)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                <span style={{ fontWeight: 700, fontSize: 16 }}>Palier {selectedTier.id} — {selectedTier.name}</span>
-                <span style={{ fontWeight: 900, fontSize: 22, color: 'var(--axis-accent)' }}>{selectedTier.priceXof} FCFA</span>
+      {loading ? (
+        <div className="card" style={{ padding: 44, textAlign: 'center', color: 'var(--axis-muted)' }}>
+          Chargement des packs et du catalogue de modèles…
+        </div>
+      ) : !catalogError && packs.length === 0 ? (
+        <div className="card" style={{ padding: 44, textAlign: 'center' }}>
+          <Wallet size={32} color="var(--axis-muted)" style={{ margin: '0 auto 12px' }} />
+          <b>Aucun pack disponible pour le moment.</b>
+        </div>
+      ) : !catalogError && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+          {familyGroups.map((family) => (
+            <section key={family.id}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: 13 }}>
+                <span style={{ width: 34, height: 34, display: 'grid', placeItems: 'center', borderRadius: 10, background: 'var(--axis-hover)', color: family.color, fontWeight: 900 }}>
+                  0{family.id}
+                </span>
+                <div>
+                  <h2 style={{ fontSize: 16, fontWeight: 750 }}>{family.name}</h2>
+                  <p style={{ fontSize: 11.5, color: 'var(--axis-muted)' }}>{family.subtitle} — {family.description}</p>
+                </div>
               </div>
-              <div style={{ fontSize: 12, color: 'var(--axis-muted)', marginTop: 2 }}>Durée 30 jours</div>
-            </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 285px), 1fr))', gap: 14 }}>
+                {family.packs.map((pack) => (
+                  <PackCard
+                    key={pack.code}
+                    pack={pack}
+                    models={models}
+                    loading={loading}
+                    onBuy={() => { setSelectedPack(pack); setPaymentChoice(null); }}
+                    isExpanded={expandedPack === pack.code}
+                    onToggle={() => setExpandedPack((current) => current === pack.code ? null : pack.code)}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
 
-            <p style={{ fontSize: 13, color: 'var(--axis-textMuted)', marginBottom: 20, lineHeight: 1.5 }}>
-              Comment souhaitez-vous régler ce forfait ?
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginTop: 24, padding: 15, borderRadius: 12, background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.2)', fontSize: 11.5, color: 'var(--axis-textMuted)', lineHeight: 1.55 }}>
+        <Zap size={16} color="var(--axis-warning)" style={{ flexShrink: 0, marginTop: 1 }} />
+        <span>Les modèles payants sont débités selon leur consommation réelle. Les modèles à tarif nul sont indiqués comme <b>modèles de test</b> : ils ne débitent pas le crédit Axis, mais restent instables et soumis aux quotas du fournisseur. Les frais CUMP ne sont pas encore inclus dans ce calcul.</span>
+      </div>
+
+      <Modal isOpen={Boolean(selectedPack) && !paymentChoice} onClose={() => setSelectedPack(null)} title="Choisir le mode de paiement">
+        {selectedPack && (
+          <div>
+            <div style={{ padding: 15, borderRadius: 12, background: 'var(--axis-bg)', border: '1px solid var(--axis-border)', marginBottom: 18 }}>
+              <div style={{ fontWeight: 750 }}>{selectedPack.name} <span style={{ color: 'var(--axis-muted)', fontWeight: 500 }}>· {selectedPack.family_name}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 9, fontSize: 13 }}>
+                <span>{formatXof(selectedPack.price_xof)}</span>
+                <b style={{ color: 'var(--axis-accent)' }}>{formatUsd(selectedPack.credit_usd)} de crédit</b>
+              </div>
+              <div style={{ marginTop: 7, fontSize: 11, color: 'var(--axis-muted)' }}>Crédit sans expiration, utilisable après validation.</div>
+            </div>
+            <div style={{ display: 'grid', gap: 10 }}>
+              <button type="button" className="btn-ghost" onClick={() => setPaymentChoice('whatsapp')} style={{ justifyContent: 'flex-start', padding: 14, borderRadius: 12, textAlign: 'left' }}>
+                <MessageCircle size={19} color="#25D366" />
+                <span><b>Contacter l’administrateur</b><small style={{ display: 'block', color: 'var(--axis-muted)', marginTop: 3 }}>Demande enregistrée, puis règlement Mobile Money sur WhatsApp.</small></span>
+              </button>
+              <button type="button" className="btn-ghost" onClick={() => setPaymentChoice('moderator')} style={{ justifyContent: 'flex-start', padding: 14, borderRadius: 12, textAlign: 'left' }}>
+                <Shield size={19} color="var(--axis-purple)" />
+                <span><b>Régler auprès d’un modérateur</b><small style={{ display: 'block', color: 'var(--axis-muted)', marginTop: 3 }}>Après paiement, saisissez son code dans l’historique des demandes.</small></span>
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal isOpen={Boolean(selectedPack) && Boolean(paymentChoice)} onClose={() => { setSelectedPack(null); setPaymentChoice(null); }} title={paymentChoice === 'whatsapp' ? 'Demande de paiement administrateur' : 'Demande de paiement modérateur'}>
+        {selectedPack && (
+          <div>
+            <div style={{ padding: 15, borderRadius: 12, background: 'var(--axis-bg)', border: '1px solid var(--axis-border)', marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontWeight: 700 }}>
+                <span>{selectedPack.name}</span><span>{formatXof(selectedPack.price_xof)}</span>
+              </div>
+              <div style={{ marginTop: 5, fontSize: 12, color: 'var(--axis-accent)' }}>{formatUsd(selectedPack.credit_usd)} crédit à l’activation</div>
+            </div>
+            <p style={{ fontSize: 12.5, color: 'var(--axis-textMuted)', lineHeight: 1.6, marginBottom: 18 }}>
+              La demande sera créée sans échéance. Le crédit sera ajouté et la clé liée sera activée après confirmation du paiement.
             </p>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <button
-                type="button"
-                onClick={() => setPaymentChoice('whatsapp')}
-                className="btn-ghost"
-                style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '16px 18px', textAlign: 'left', borderRadius: 12 }}
-              >
-                <div style={{ width: 40, height: 40, borderRadius: 10, background: 'rgba(37,211,102,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <MessageCircle size={20} color="#25D366" />
-                </div>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 14 }}>Service WhatsApp — Administrateur</div>
-                  <div style={{ fontSize: 12, color: 'var(--axis-muted)', marginTop: 2 }}>Envoyez votre preuve de paiement Mobile Money et recevez confirmation sous 24h.</div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setPaymentChoice('moderator')}
-                className="btn-ghost"
-                style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '16px 18px', textAlign: 'left', borderRadius: 12 }}
-              >
-                <div style={{ width: 40, height: 40, borderRadius: 10, background: 'rgba(192,132,252,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <Shield size={20} color="var(--axis-purple)" />
-                </div>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 14 }}>Via Modérateur de Proximité</div>
-                  <div style={{ fontSize: 12, color: 'var(--axis-muted)', marginTop: 2 }}>Vous avez un modérateur près de vous ? Le paiement et la validation se font rapidement, en direct.</div>
-                </div>
-              </button>
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      {/* Modal Étape 2 : WhatsApp — Confirmation & Redirection */}
-      <Modal isOpen={!!selectedTier && paymentChoice === 'whatsapp'} onClose={() => { setSelectedTier(null); setPaymentChoice(null); }} title="Paiement via WhatsApp Administrateur">
-        {selectedTier && (
-          <div>
-            <div style={{ background: 'var(--axis-bg)', padding: '14px 18px', borderRadius: 12, marginBottom: 20, border: '1px solid var(--axis-border)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ fontWeight: 700 }}>Palier {selectedTier.id} — {selectedTier.name}</span>
-                <span style={{ fontWeight: 900, color: 'var(--axis-accent)' }}>{selectedTier.priceXof} FCFA</span>
-              </div>
-            </div>
-
-            <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(37,211,102,0.06)', border: '1px solid rgba(37,211,102,0.2)', marginBottom: 22, fontSize: 12.5, lineHeight: 1.6 }}>
-              <b style={{ color: '#25D366' }}>Comment ça marche :</b><br />
-              1. Cliquez sur <b>"Confirmer et aller sur WhatsApp"</b> — votre demande sera automatiquement créée.<br />
-              2. Vous serez redirigé sur WhatsApp pour contacter l'administrateur et lui envoyer votre preuve de paiement Mobile Money.<br />
-              3. La validation se fait <b>sous 24h</b>.
-            </div>
-
             <div style={{ display: 'flex', gap: 10 }}>
-              <button type="button" onClick={() => setPaymentChoice(null)} className="btn-ghost" style={{ flex: 1 }}>
-                â† Retour
+              <button type="button" className="btn-ghost" onClick={() => setPaymentChoice(null)} style={{ flex: 1 }}>
+                <ArrowDown size={14} /> Retour
               </button>
-              <button type="button" onClick={handleSubscribeConfirm} disabled={isSubmitting} className="btn-primary" style={{ flex: 2, background: '#25D366', color: '#fff' }}>
-                {isSubmitting ? 'Création...' : '✓ Confirmer et aller sur WhatsApp'}
-              </button>
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      {/* Modal Étape 2 : Modérateur — Confirmation (le code MOD sera saisi dans l'historique) */}
-      <Modal isOpen={!!selectedTier && paymentChoice === 'moderator'} onClose={() => { setSelectedTier(null); setPaymentChoice(null); }} title="Paiement via Modérateur de Proximité">
-        {selectedTier && (
-          <div>
-            <div style={{ background: 'var(--axis-bg)', padding: '14px 18px', borderRadius: 12, marginBottom: 20, border: '1px solid var(--axis-border)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ fontWeight: 700 }}>Palier {selectedTier.id} — {selectedTier.name}</span>
-                <span style={{ fontWeight: 900, color: 'var(--axis-accent)' }}>{selectedTier.priceXof} FCFA</span>
-              </div>
-            </div>
-
-            <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(192,132,252,0.06)', border: '1px solid rgba(192,132,252,0.2)', marginBottom: 22, fontSize: 12.5, lineHeight: 1.6 }}>
-              <b style={{ color: 'var(--axis-purple)' }}>Comment ça marche :</b><br />
-              1. Cliquez sur <b>"Confirmer la demande"</b> — votre demande est créée immédiatement.<br />
-              2. Rendez-vous dans <b>Historique des Abonnements</b> — cliquez sur votre nouvelle demande.<br />
-              3. Saisissez le code <b>MOD-XXXX</b> de votre modérateur pour lui soumettre la demande de validation.<br />
-              4. Il valide après réception de votre paiement — <b>activation rapide</b>.
-            </div>
-
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button type="button" onClick={() => setPaymentChoice(null)} className="btn-ghost" style={{ flex: 1 }}>
-                â† Retour
-              </button>
-              <button type="button" onClick={handleSubscribeConfirm} disabled={isSubmitting} className="btn-primary" style={{ flex: 2 }}>
-                {isSubmitting ? 'Création...' : '✓ Confirmer la demande'}
+              <button type="button" className="btn-primary" onClick={submitPackRequest} disabled={isSubmitting} style={{ flex: 2 }}>
+                {isSubmitting ? 'Création…' : <><Check size={15} /> Créer la demande</>}
               </button>
             </div>
           </div>

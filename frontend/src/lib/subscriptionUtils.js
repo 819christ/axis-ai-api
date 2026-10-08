@@ -1,6 +1,33 @@
-export const TIERS_NAMES = { 1: 'Starter', 2: 'Basic', 3: 'Standard', 4: 'Pro', 5: 'Expert', 6: 'Master', 7: 'Enterprise' };
 export const TIERS_XOF = { 1: 1500, 2: 3000, 3: 6000, 4: 12000, 5: 18000, 6: 24000, 7: 30000 };
+export const PACK_NAMES = {
+  'starter-light': 'Starter Light',
+  'starter-standard': 'Starter Standard',
+  'starter-plus': 'Starter Plus',
+  'pro-starter': 'Pro Starter',
+  'pro-standard': 'Pro Standard',
+  'pro-advanced': 'Pro Advanced',
+  'business-light': 'Business Light',
+  'business-standard': 'Business Standard',
+  'business-ultimate': 'Business Ultimate',
+};
+export const PACK_XOF = {
+  'starter-light': 1500,
+  'starter-standard': 2500,
+  'starter-plus': 4500,
+  'pro-starter': 7500,
+  'pro-standard': 12000,
+  'pro-advanced': 18000,
+  'business-light': 22000,
+  'business-standard': 26000,
+  'business-ultimate': 30000,
+};
 export const WA_NUMBER = '0166518473';
+
+export const packName = (sub) =>
+  sub.package_name || PACK_NAMES[sub.package_code] || `Pack ${sub.tier_number}`;
+
+export const packPriceXof = (sub) =>
+  Number(sub.price_xof || PACK_XOF[sub.package_code] || TIERS_XOF[sub.tier_number] || 0);
 
 export const isPendingStatus = (s) => s.status === 'pending_validation' || s.status === 'pending';
 
@@ -24,6 +51,7 @@ export const usagePct = (sub) => {
 
 // % de la période écoulée (starts_at → expires_at)
 export const periodPct = (sub) => {
+  if (!sub.expires_at) return 0;
   const start = new Date(sub.starts_at).getTime();
   const end = new Date(sub.expires_at).getTime();
   if (!start || !end || end <= start) return 0;

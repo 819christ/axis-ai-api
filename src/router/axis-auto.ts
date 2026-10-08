@@ -19,24 +19,6 @@ export interface ModelMetadata {
 
 export const KNOWN_MODELS: Record<string, ModelMetadata> = {
   // LOW
-  'meta-llama/llama-3.3-70b-instruct:free': {
-    id: 'meta-llama/llama-3.3-70b-instruct:free',
-    name: 'Llama 3.3 70B Free',
-    powerLevel: 'low',
-    combinedCostPerMillion: 0.0,
-    inputCostPerToken: 0.0,
-    outputCostPerToken: 0.0,
-    isFree: true,
-  },
-  'google/gemini-2.0-flash-exp:free': {
-    id: 'google/gemini-2.0-flash-exp:free',
-    name: 'Gemini 2.0 Flash Exp Free',
-    powerLevel: 'low',
-    combinedCostPerMillion: 0.0,
-    inputCostPerToken: 0.0,
-    outputCostPerToken: 0.0,
-    isFree: true,
-  },
   'google/gemini-2.0-flash-001': {
     id: 'google/gemini-2.0-flash-001',
     name: 'Gemini 2.0 Flash',
@@ -118,7 +100,7 @@ export const KNOWN_MODELS: Record<string, ModelMetadata> = {
   'deepseek/deepseek-r1': {
     id: 'deepseek/deepseek-r1',
     name: 'DeepSeek R1 Reasoning',
-    powerLevel: 'ultra',
+    powerLevel: 'high',
     combinedCostPerMillion: 2.74,
     inputCostPerToken: 0.00000055,
     outputCostPerToken: 0.00000219,
@@ -127,7 +109,7 @@ export const KNOWN_MODELS: Record<string, ModelMetadata> = {
   'openai/o1-mini': {
     id: 'openai/o1-mini',
     name: 'OpenAI o1 Mini',
-    powerLevel: 'ultra',
+    powerLevel: 'high',
     combinedCostPerMillion: 15.00,
     inputCostPerToken: 0.00000300,
     outputCostPerToken: 0.00001200,
@@ -136,7 +118,7 @@ export const KNOWN_MODELS: Record<string, ModelMetadata> = {
   'anthropic/claude-3.5-sonnet': {
     id: 'anthropic/claude-3.5-sonnet',
     name: 'Claude 3.5 Sonnet',
-    powerLevel: 'ultra',
+    powerLevel: 'high',
     combinedCostPerMillion: 18.00,
     inputCostPerToken: 0.00000300,
     outputCostPerToken: 0.00001500,
@@ -173,8 +155,8 @@ export function estimateTokens(messages: any[] = []): number {
   return Math.max(1, Math.ceil(totalChars / 3.8));
 }
 
-// Mots-clés pour la détection d'effort
-const ULTRA_KEYWORDS = [
+// Mots-clés pour la détection d'effort élevé
+const HIGH_REASONING_KEYWORDS = [
   'preuve mathématique',
   'démontre',
   'théorème',
@@ -233,12 +215,12 @@ export function decidePowerLevel(
   }
   const lower = textSample.toLowerCase();
 
-  // 1. Détection Ultra (Raisonnement lourd)
-  for (const kw of ULTRA_KEYWORDS) {
+  // 1. Détection High (Raisonnement lourd)
+  for (const kw of HIGH_REASONING_KEYWORDS) {
     if (lower.includes(kw)) {
       return {
-        powerLevel: 'ultra',
-        decisionReason: `Besoin de fort raisonnement détecté (mot-clé: "${kw}").`,
+        powerLevel: 'high',
+        decisionReason: `Besoin de raisonnement avancé détecté (mot-clé: "${kw}").`,
       };
     }
   }
@@ -294,7 +276,7 @@ export function selectBestModelForTier(
   tierNumber: number,
   alpha = 5.0,
   beta = 0.0
-): { selectedModel: ModelMetadata; downgraded: boolean; originalLevel: PowerLevel } {
+): { selectedModel: ModelMetadata | null; downgraded: boolean; originalLevel: PowerLevel } {
   const maxAllowedCost = calculateMaxAllowedCost(tierNumber, alpha, beta);
 
   // Hiérarchie de puissance descendante si le palier ne permet pas le niveau souhaité
@@ -318,12 +300,38 @@ export function selectBestModelForTier(
     }
   }
 
-  // Fallback ultime : modèle gratuit garanti
-  return {
-    selectedModel: KNOWN_MODELS['meta-llama/llama-3.3-70b-instruct:free'],
-    downgraded: true,
-    originalLevel: powerLevel,
-  };
+  return { selectedModel: null, downgraded: true, originalLevel: powerLevel };
+}
+
+export function selectBestModelForBudget(
+  powerLevel: PowerLevel,
+  creditUsd: number,
+  models: ModelMetadata[],
+): { selectedModel: ModelMetadata; fallbackChain: string[] } | null {
+  const maximumCostPerMillion = creditUsd / 40;
+  const candidates = models
+    .filter((model) =>
+      !model.isFree &&
+      model.combinedCostPerMillion > 0 &&
+      model.combinedCostPerMillion <= maximumCostPerMillion
+    )
+    .sort((a, b) => a.combinedCostPerMillion - b.combinedCostPerMillion);
+
+  if (candidates.length === 0) return null;
+
+  const requestedLevel = powerLevel === 'ultra' ? 'high' : powerLevel;
+  const selectedIndex = requestedLevel === 'low'
+    ? 0
+    : requestedLevel === 'high'
+      ? candidates.length - 1
+      : Math.floor((candidates.length - 1) / 2);
+  const selectedModel = candidates[selectedIndex];
+  const fallbackChain = candidates
+    .filter((model) => model.id !== selectedModel.id && model.combinedCostPerMillion <= selectedModel.combinedCostPerMillion)
+    .sort((a, b) => b.combinedCostPerMillion - a.combinedCostPerMillion)
+    .map((model) => model.id);
+
+  return { selectedModel, fallbackChain };
 }
 
 export interface RouteResolution {
@@ -342,7 +350,9 @@ export function resolveAxisRoute(
   requestedModel: string,
   messages: any[] = [],
   tierNumber = 1,
-  tools?: any[]
+  tools?: any[],
+  availableModels?: ModelMetadata[],
+  creditUsd = 0,
 ): RouteResolution {
   const norm = (requestedModel || 'axis-auto').trim().toLowerCase();
 
@@ -351,40 +361,66 @@ export function resolveAxisRoute(
     // Étape 1 : Décision
     const decision = decidePowerLevel(messages, tools);
     // Étape 2 : Exécution
-    const selection = selectBestModelForTier(decision.powerLevel, tierNumber);
+    const budgetSelection = availableModels === undefined
+      ? null
+      : selectBestModelForBudget(decision.powerLevel, creditUsd, availableModels);
+    const selectedModel = availableModels === undefined
+      ? selectBestModelForTier(decision.powerLevel, tierNumber).selectedModel
+      : budgetSelection?.selectedModel;
+
+    if (!selectedModel) {
+      return {
+        targetModel: '',
+        originalRequestedModel: requestedModel,
+        powerLevel: decision.powerLevel,
+        isVirtualRoute: true,
+        routingReason: 'Aucun modèle payant du catalogue ne respecte le seuil de coût de ce pack.',
+        fallbackChain: [],
+      };
+    }
 
     return {
-      targetModel: selection.selectedModel.id,
+      targetModel: selectedModel.id,
       originalRequestedModel: requestedModel,
-      powerLevel: selection.selectedModel.powerLevel,
+      powerLevel: selectedModel.powerLevel,
       isVirtualRoute: true,
-      routingReason: `[Axis Auto 2-Steps] Étape 1 (Décision): ${decision.decisionReason} -> Étape 2 (Exécution): Sélection de ${selection.selectedModel.name} (Palier ${tierNumber} cap: ${calculateMaxAllowedCost(tierNumber)}$/1M).`,
-      fallbackChain: ['google/gemini-2.0-flash-001', 'meta-llama/llama-3.3-70b-instruct:free'],
+      routingReason: `[Axis Auto 2-Steps] Étape 1 (Décision): ${decision.decisionReason} -> Étape 2 (Exécution): Sélection de ${selectedModel.name} (crédit $${creditUsd}, seuil ${creditUsd / 40}$/1M).`,
+      fallbackChain: budgetSelection?.fallbackChain || [],
     };
   }
 
   // Routes directes par niveau
   if (norm === 'axis-low') {
-    const selection = selectBestModelForTier('low', tierNumber);
+    const budgetSelection = availableModels === undefined
+      ? null
+      : selectBestModelForBudget('low', creditUsd, availableModels);
+    const selectedModel = availableModels === undefined
+      ? selectBestModelForTier('low', tierNumber).selectedModel
+      : budgetSelection?.selectedModel;
     return {
-      targetModel: selection.selectedModel.id,
+      targetModel: selectedModel?.id || '',
       originalRequestedModel: requestedModel,
       powerLevel: 'low',
       isVirtualRoute: true,
       routingReason: '[Axis Low] Modèle léger sélectionné.',
-      fallbackChain: ['meta-llama/llama-3.3-70b-instruct:free'],
+      fallbackChain: budgetSelection?.fallbackChain || [],
     };
   }
 
   if (norm === 'axis-ultra') {
-    const selection = selectBestModelForTier('ultra', tierNumber);
+    const budgetSelection = availableModels === undefined
+      ? null
+      : selectBestModelForBudget('high', creditUsd, availableModels);
+    const selectedModel = availableModels === undefined
+      ? selectBestModelForTier('ultra', tierNumber).selectedModel
+      : budgetSelection?.selectedModel;
     return {
-      targetModel: selection.selectedModel.id,
+      targetModel: selectedModel?.id || '',
       originalRequestedModel: requestedModel,
-      powerLevel: selection.selectedModel.powerLevel,
+      powerLevel: selectedModel?.powerLevel || 'high',
       isVirtualRoute: true,
-      routingReason: `[Axis Ultra] Modèle ultra-raisonnement sélectionné (${selection.selectedModel.name}).`,
-      fallbackChain: ['deepseek/deepseek-r1', 'google/gemini-2.0-flash-001'],
+      routingReason: `[Axis High] Modèle le plus puissant disponible (${selectedModel?.name || 'indisponible'}).`,
+      fallbackChain: budgetSelection?.fallbackChain || (availableModels === undefined ? ['deepseek/deepseek-r1', 'google/gemini-2.0-flash-001'] : []),
     };
   }
 

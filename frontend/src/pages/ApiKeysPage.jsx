@@ -11,9 +11,11 @@ import {
   CheckCircle2, ArrowRight, Shield, Layers, Zap, ChevronRight, Hourglass
 } from 'lucide-react';
 
-// Paliers XOF pour l'affichage du badge
-const TIERS_XOF = { 1: '1 500', 2: '3 000', 3: '6 000', 4: '12 000', 5: '18 000', 6: '24 000', 7: '30 000' };
-const TIERS_NAMES = { 1: 'Starter', 2: 'Basic', 3: 'Standard', 4: 'Pro', 5: 'Expert', 6: 'Master', 7: 'Enterprise' };
+const isUsablePack = (sub) => Boolean(
+  sub?.status === 'active'
+  && (!sub.expires_at || new Date(sub.expires_at) > new Date())
+  && Number(sub.balance_usd) > 0
+);
 
 export const ApiKeysPage = () => {
   const { profile } = useAuth();
@@ -49,7 +51,7 @@ export const ApiKeysPage = () => {
     Boolean(k.subscriptions && ['pending_validation', 'pending'].includes(k.subscriptions.status));
   const getKeyState = (k) => {
     const s = k.subscriptions;
-    if (s && s.status === 'active' && new Date(s.expires_at) > new Date()) return 'live';
+    if (isUsablePack(s)) return 'live';
     if (isSubPending(k)) return 'pending';
     return 'unlinked';
   };
@@ -64,7 +66,7 @@ export const ApiKeysPage = () => {
   const isAdmin = profile?.role === 'admin';
 
   // Abonnement actif global (peut être null)
-  const hasActiveSub = subscription?.status === 'active' && new Date(subscription.expires_at) > new Date();
+  const hasActiveSub = isUsablePack(subscription);
 
   // --- Focus sur une clé depuis la page "Mes abonnements" (?focus=<keyId>) ---
   const [searchParams] = useSearchParams();
@@ -110,8 +112,7 @@ export const ApiKeysPage = () => {
   // === Toggle (activation/désactivation) ===
   const handleToggle = async (keyItem, targetState) => {
     const hasActiveSub = Boolean(
-      keyItem.subscriptions?.status === 'active' &&
-      new Date(keyItem.subscriptions.expires_at) > new Date()
+      isUsablePack(keyItem.subscriptions)
     );
     const hasPendingSub = Boolean(keyItem.subscriptions && 
       (keyItem.subscriptions.status === 'pending_validation' || keyItem.subscriptions.status === 'pending'));
@@ -144,7 +145,7 @@ export const ApiKeysPage = () => {
   // Clés sans abonnement actif lié
   const keysWithoutSub = keys.filter(k => {
     const s = k.subscriptions;
-    return !s || s.status !== 'active' || new Date(s.expires_at) <= new Date();
+    return !isUsablePack(s);
   });
 
   return (
@@ -182,7 +183,7 @@ export const ApiKeysPage = () => {
             </span>
           </div>
           <Link to="/dashboard/subscriptions" className="btn-ghost" style={{ fontSize: 12, padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 6 }}>
-            Voir les 7 paliers (dès 1 500 FCFA) <ArrowRight size={13} />
+            Voir les 9 packs (dès 1 500 FCFA) <ArrowRight size={13} />
           </Link>
         </div>
       )}
@@ -217,7 +218,7 @@ export const ApiKeysPage = () => {
               ) : (
                 keys.map(k => {
                   const sub = k.subscriptions;
-                  const hasSub = Boolean(sub && sub.status === 'active' && new Date(sub.expires_at) > new Date());
+                  const hasSub = isUsablePack(sub);
                   const isPending = Boolean(sub && (sub.status === 'pending_validation' || sub.status === 'pending'));
                   const budget = Number(sub?.budget_amount_usd || 0);
                   const balance = Number(sub?.balance_usd || 0);
@@ -246,7 +247,7 @@ export const ApiKeysPage = () => {
                         {hasSub ? (
                           <div>
                             <span className="badge badge-green" style={{ marginBottom: 4, display: 'block', width: 'fit-content' }}>
-                              Palier {sub.tier_number} — {TIERS_NAMES[sub.tier_number]}
+                              {sub.package_name || `Pack ${sub.tier_number}`}
                             </span>
                             {/* Mini barre de progression */}
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

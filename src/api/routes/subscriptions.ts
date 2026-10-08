@@ -1,43 +1,55 @@
 import { FastifyPluginAsync } from 'fastify';
 import { supabase } from '../../db/supabase.js';
+import { config } from '../../config/env.js';
 
 
 export const subscriptionsRoutes: FastifyPluginAsync = async (fastify) => {
-  /**
-   * Souscription à un abonnement (avec application de la règle anti-abus des 7 jours)
-   */
   fastify.post('/subscriptions', async (request, reply) => {
-    const body = request.body as {
-      user_id: string;
-      tier_number: number;
-      moderator_code?: string;
-    };
+    const body = request.body as { pack_code?: string } | null;
+    const authHeader = request.headers.authorization;
+    const accessToken = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
 
-    if (!body || !body.user_id || !body.tier_number) {
-      return reply.status(400).send({
-        error: 'Les paramètres user_id (UUID) et tier_number (1 à 7) sont obligatoires.',
-      });
+    if (!accessToken) {
+      return reply.status(401).send({ error: { message: 'Un jeton utilisateur est requis.' } });
+    }
+    if (!body || typeof body.pack_code !== 'string' || !body.pack_code.trim()) {
+      return reply.status(400).send({ error: { message: 'Le paramètre pack_code est obligatoire.' } });
     }
 
-    const { data, error } = await supabase.rpc('axis_subscribe', {
-      p_user_id: body.user_id,
-      p_tier_number: body.tier_number,
-      p_moderator_code: body.moderator_code || null,
-    });
+    const { data: authData, error: authError } = await supabase.auth.getUser(accessToken);
+    if (authError || !authData.user) {
+      return reply.status(401).send({ error: { message: 'Jeton utilisateur invalide.' } });
+    }
 
-    if (error) return reply.status(500).send({ error: error.message });
-    return reply.status(data?.http_status || 200).send(data);
+    if (!config.supabaseAnonKey) {
+      fastify.log.error('SUPABASE_ANON_KEY is required to create authenticated pack requests.');
+      return reply.status(503).send({ error: { message: 'Création de demande temporairement indisponible.' } });
+    }
+
+    const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/axis_request_pack`, {
+      method: 'POST',
+      headers: {
+        apikey: config.supabaseAnonKey,
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ p_pack_code: body.pack_code.trim() }),
+    });
+    const result = await response.json() as Record<string, unknown>;
+    if (!response.ok) {
+      fastify.log.error({ statusCode: response.status, result }, 'Pack request RPC failed.');
+      return reply.status(response.status).send(result);
+    }
+    const httpStatus = typeof result.http_status === 'number' ? result.http_status : 200;
+    return reply.status(httpStatus).send(result);
   });
 
-
-  /**
-   * Consultation des 7 paliers disponibles et de la formule mathématique MaxAllowedCost
-   */
   fastify.get('/tiers', async (_request, reply) => {
     const { data, error } = await supabase
-      .from('tiers')
-      .select('*')
-      .order('tier_number', { ascending: true });
+      .from('subscription_packs')
+      .select('code, tier_number, family_name, name, price_xof, credit_usd, description, sort_order')
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true });
 
     if (error) {
       return reply.status(500).send({ error: error.message });
@@ -45,8 +57,8 @@ export const subscriptionsRoutes: FastifyPluginAsync = async (fastify) => {
 
     return reply.send({
       object: 'list',
-      formula: 'MaxAllowedCost(P_i) = alpha * i + beta (en USD par 1M tokens combinés)',
-      data,
+      formula: 'max_model_cost_per_million_usd = pack.credit_usd / 40',
+      data: data || [],
     });
   });
 };

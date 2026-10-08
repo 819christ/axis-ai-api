@@ -5,12 +5,10 @@ import { supabase } from '../supabase';
 import { useToast } from '../components/Toast';
 import { Modal } from '../components/Modal';
 import {
-  Clock, Shield, RefreshCw, MessageCircle, AlertTriangle,
+  Clock, Shield, RefreshCw, MessageCircle,
   CreditCard, Sparkles, ArrowRight, Hourglass, Zap, Key, Layers, Wallet, CalendarDays
 } from 'lucide-react';
 
-const TIERS_NAMES = { 1: 'Starter', 2: 'Basic', 3: 'Standard', 4: 'Pro', 5: 'Expert', 6: 'Master', 7: 'Enterprise' };
-const TIERS_XOF   = { 1: '1 500', 2: '3 000', 3: '6 000', 4: '12 000', 5: '18 000', 6: '24 000', 7: '30 000' };
 const WA_NUMBER   = '0166518473';
 
 const calculateDaysRemaining = (expiresAt) => {
@@ -32,7 +30,6 @@ export const HistoryPage = ({ initialTab = 'subscriptions' }) => {
   const [selectedSub, setSelectedSub] = useState(null);
   const [modCode, setModCode] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [expirationAlertSub, setExpirationAlertSub] = useState(null);
   const addToast = useToast();
 
   useEffect(() => {
@@ -64,14 +61,6 @@ export const HistoryPage = ({ initialTab = 'subscriptions' }) => {
         setActiveTab(isPendingStatus(focusedSub) ? 'payments' : 'subscriptions');
       }
 
-      // Alerte de renouvellement J-7 (réabonnement autorisé dans les 7 derniers jours)
-      const activeSub = subs.find(s => s.status === 'active');
-      if (activeSub && activeSub.expires_at) {
-        const daysLeft = calculateDaysRemaining(activeSub.expires_at);
-        if (daysLeft !== null && daysLeft <= 7 && daysLeft >= 0) {
-          setExpirationAlertSub({ ...activeSub, daysLeft });
-        }
-      }
     } catch (e) {
       console.error(e);
       addToast(e.message || 'Erreur lors du chargement des abonnements', 'error');
@@ -130,9 +119,9 @@ export const HistoryPage = ({ initialTab = 'subscriptions' }) => {
             <Sparkles size={13} color="var(--axis-accent)" />
             <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--axis-accent)' }}>GESTIONNAIRE CENTRALISÉ</span>
           </div>
-          <h1 style={{ fontSize: 26, fontWeight: 800 }}>Mes Abonnements & Paiements</h1>
+          <h1 style={{ fontSize: 26, fontWeight: 800 }}>Mes packs & paiements</h1>
           <p style={{ color: 'var(--axis-textMuted)', fontSize: 13, marginTop: 2 }}>
-            Suivez vos packs, leurs modèles limités et le processus de validation de vos paiements.
+            Suivez vos crédits, leur consommation et la validation de vos paiements.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
@@ -182,12 +171,12 @@ export const HistoryPage = ({ initialTab = 'subscriptions' }) => {
           {activeTab === 'subscriptions' ? (
             <>
               <Clock size={40} color="var(--axis-muted)" style={{ margin: '0 auto 16px' }} />
-              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Aucun abonnement actif</h3>
+              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Aucun pack actif</h3>
               <p style={{ color: 'var(--axis-textMuted)', fontSize: 13, marginBottom: 20 }}>
-                Créez une clé API puis souscrivez à l'un de nos 7 paliers (dès 1 500 FCFA) pour activer vos accès aux modèles.
+                Choisissez l’un de nos 9 packs pour créditer votre portefeuille et activer vos accès aux modèles.
               </p>
               <Link to="/dashboard/subscriptions" className="btn-primary" style={{ fontSize: 13 }}>
-                Découvrir les paliers <ArrowRight size={14} />
+                Découvrir les packs <ArrowRight size={14} />
               </Link>
             </>
           ) : (
@@ -213,6 +202,7 @@ export const HistoryPage = ({ initialTab = 'subscriptions' }) => {
             const isActive = sub.status === 'active';
             const isPending = isPendingStatus(sub);
             const isExpired = sub.status === 'expired' || sub.status === 'depleted' || (daysLeft !== null && daysLeft <= 0);
+            const packName = sub.package_name || `Pack ${sub.tier_number}`;
 
             const progressColor = progressPct >= 100 ? 'var(--axis-danger)' : progressPct >= 80 ? 'var(--axis-warning)' : 'var(--axis-accent)';
             const linkedKey = keyForSub(sub.id);
@@ -239,9 +229,9 @@ export const HistoryPage = ({ initialTab = 'subscriptions' }) => {
                     </div>
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <h3 style={{ fontSize: 18, fontWeight: 800 }}>Palier {sub.tier_number} — {TIERS_NAMES[sub.tier_number] || ''}</h3>
+                        <h3 style={{ fontSize: 18, fontWeight: 800 }}>{packName}</h3>
                         <span className={`badge ${isActive ? 'badge-green' : isPending ? 'badge-yellow' : isExpired ? 'badge-red' : 'badge-gray'}`}>
-                          {isActive ? 'Actif' : isPending ? 'En attente' : isExpired ? 'Expiré' : sub.status}
+                          {isActive ? 'Actif' : isPending ? 'En attente' : sub.status === 'depleted' ? 'Épuisé' : isExpired ? 'Expiré' : sub.status}
                         </span>
                       </div>
                       {sub.expires_at && (
@@ -249,6 +239,9 @@ export const HistoryPage = ({ initialTab = 'subscriptions' }) => {
                           <CalendarDays size={13} />
                           Échéance : {new Date(sub.expires_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}
                         </div>
+                      )}
+                      {!sub.expires_at && (
+                        <div style={{ fontSize: 12, color: 'var(--axis-muted)', marginTop: 5 }}>Crédit sans échéance</div>
                       )}
                     </div>
                   </div>
@@ -296,15 +289,15 @@ export const HistoryPage = ({ initialTab = 'subscriptions' }) => {
                 </div>
 
 
-                {/* Barre de progression des modèles limités (sans montant) */}
+                {/* Barre de consommation du crédit */}
                 <div style={{ background: 'var(--axis-bg)', borderRadius: 14, padding: '16px 18px', border: '1px solid var(--axis-border)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, fontSize: 12.5 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <Zap size={14} color="var(--axis-accent)" />
-                      <span style={{ fontWeight: 600, color: 'var(--axis-text)' }}>Utilisation des modèles limités :</span>
+                      <span style={{ fontWeight: 600, color: 'var(--axis-text)' }}>Crédit consommé :</span>
                       <b style={{ color: progressColor }}>{progressPct.toFixed(1)}%</b>
                     </div>
-                    <span style={{ fontSize: 11, color: 'var(--axis-muted)' }}>Illimité jusqu'à la fin du mois</span>
+                    <span style={{ fontSize: 11, color: 'var(--axis-muted)' }}>${balance.toFixed(2)} / ${budget.toFixed(2)} restants</span>
                   </div>
                   <div style={{ width: '100%', height: 10, borderRadius: 999, background: 'rgba(255,255,255,0.06)', overflow: 'hidden', position: 'relative' }}>
                     <div style={{ width: `${progressPct}%`, height: '100%', borderRadius: 999, background: progressColor, transition: 'width 0.4s ease, background 0.3s ease', boxShadow: `0 0 10px ${progressColor}44` }} />
@@ -321,7 +314,7 @@ export const HistoryPage = ({ initialTab = 'subscriptions' }) => {
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: 8 }}>
-                      <a href={`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(`Bonjour Axis AI 👋\nJe souhaite valider mon abonnement Palier ${sub.tier_number} (${TIERS_XOF[sub.tier_number]} FCFA).`)}`} target="_blank" rel="noreferrer" className="btn-ghost" style={{ fontSize: 12, padding: '6px 12px', color: '#25D366' }}>
+                      <a href={`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(`Bonjour Axis AI 👋\nJe souhaite valider mon pack ${packName} (${Number(sub.price_xof || 0).toLocaleString('fr-FR')} FCFA).`)}`} target="_blank" rel="noreferrer" className="btn-ghost" style={{ fontSize: 12, padding: '6px 12px', color: '#25D366' }}>
                         <MessageCircle size={14} /> WhatsApp Admin
                       </a>
                       <button onClick={() => { setSelectedSub(sub); setModCode(''); }} className="btn-primary" style={{ fontSize: 12, padding: '6px 14px' }}>
@@ -343,8 +336,8 @@ export const HistoryPage = ({ initialTab = 'subscriptions' }) => {
           <div>
             <div style={{ padding: '14px 16px', borderRadius: 10, background: 'var(--axis-bg)', border: '1px solid var(--axis-border)', marginBottom: 20 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                <span style={{ fontWeight: 700, fontSize: 15 }}>Palier {selectedSub.tier_number} — {TIERS_NAMES[selectedSub.tier_number]}</span>
-                <span style={{ fontWeight: 900, fontSize: 18, color: 'var(--axis-accent)' }}>{TIERS_XOF[selectedSub.tier_number]} FCFA</span>
+                <span style={{ fontWeight: 700, fontSize: 15 }}>{selectedSub.package_name || `Pack ${selectedSub.tier_number}`}</span>
+                <span style={{ fontWeight: 900, fontSize: 18, color: 'var(--axis-accent)' }}>{Number(selectedSub.price_xof || 0).toLocaleString('fr-FR')} FCFA</span>
               </div>
               <div style={{ fontSize: 12, color: 'var(--axis-muted)', marginTop: 4 }}>
                 Demande du {new Date(selectedSub.created_at).toLocaleDateString('fr-FR')}
@@ -365,7 +358,7 @@ export const HistoryPage = ({ initialTab = 'subscriptions' }) => {
               <div style={{ display: 'flex', gap: 10 }}>
                 <button type="button" onClick={() => setSelectedSub(null)} className="btn-ghost" style={{ flex: 1 }}>Annuler</button>
                 <button type="submit" disabled={isSubmitting} className="btn-primary" style={{ flex: 2 }}>
-                  {isSubmitting ? 'Validation...' : 'Valider mon abonnement'}
+                  {isSubmitting ? 'Validation...' : 'Valider mon pack'}
                 </button>
               </div>
             </form>
@@ -373,30 +366,6 @@ export const HistoryPage = ({ initialTab = 'subscriptions' }) => {
         )}
       </Modal>
 
-      {/* Modal : Alerte de renouvellement (J-7) */}
-      <Modal isOpen={!!expirationAlertSub} title="⏰ Renouvellement disponible">
-        {expirationAlertSub && (
-          <div>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '14px 16px', borderRadius: 10, background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.3)', marginBottom: 20 }}>
-              <AlertTriangle size={20} color="var(--axis-warning)" style={{ flexShrink: 0, marginTop: 2 }} />
-              <div style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--axis-text)' }}>
-                Votre abonnement <b>Palier {expirationAlertSub.tier_number} — {TIERS_NAMES[expirationAlertSub.tier_number]}</b> expire dans <b>{expirationAlertSub.daysLeft} jour(s)</b>.
-              </div>
-            </div>
-            <div style={{ padding: '14px 16px', borderRadius: 10, background: 'var(--axis-bg)', border: '1px solid var(--axis-border)', marginBottom: 22, fontSize: 12.5, lineHeight: 1.6 }}>
-              • À l'issue des 30 jours, vos clés API associées seront automatiquement suspendues.<br />
-              • Vous pouvez renouveler ou choisir un palier supérieur dès maintenant pour éviter toute interruption.
-            </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button type="button" onClick={() => setExpirationAlertSub(null)} className="btn-ghost" style={{ flex: 1 }}>Plus tard</button>
-              <Link to="/dashboard/subscriptions" onClick={() => setExpirationAlertSub(null)} className="btn-primary" style={{ flex: 2, textAlign: 'center', textDecoration: 'none' }}>
-                Renouveler mon pack
-              </Link>
-            </div>
-          </div>
-        )}
-      </Modal>
     </div>
   );
 };
-

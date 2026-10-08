@@ -2,67 +2,53 @@
 
 Proxy d'API haute performance, sécurisé et intelligent pour **OpenRouter**, hébergé avec **Supabase** et propulsé par le routeur dynamique **Axis Auto**.
 
-Ce système agit comme un **Gatekeeper atomique** : il intercepte chaque requête, vérifie la validité de la clé API, contrôle le budget restant en USD sur l'abonnement rattaché, applique la formule mathématique de filtrage par palier ($P_1$ à $P_7$), dispatche intelligemment les prompts en 2 étapes, et met à jour les soldes de manière atomique sans goulot d'étranglement.
+Ce système agit comme un **Gatekeeper atomique** : il intercepte chaque requête, vérifie la validité de la clé API, contrôle le crédit USD restant du pack rattaché, filtre les modèles selon le crédit initial du pack et met à jour les soldes de manière atomique.
 
 ---
 
 ## 📋 Architecture & Fonctionnalités Clés
 
+Le catalogue commercial comprend trois familles et neuf packs pay-as-you-go. Chaque pack crédite un montant USD fixe à validation du paiement, sans échéance. Les modèles payants proposés sont sélectionnés depuis le catalogue actif selon le seuil `crédit initial / 40` USD combinés par million de tokens ; les modèles à coût nul sont des modèles de test, soumis aux quotas du fournisseur et non présentés comme illimités. La mutualisation CUMP des frais n'est pas encore incluse.
+
 1. **Procédure Stockée RPC PostgreSQL Pure (Zéro Edge Function)** :
    - Atomicité stricte avec verrouillage de ligne (`FOR UPDATE`) pour éliminer tout risque de double dépense en forte concurrence.
-   - Contrôle du cycle de vie des 30 jours et bascule automatique.
-   - Rejet net (**HTTP 402**) si le solde est épuisé ou l'abonnement expiré.
-   - Rejet immédiat (**HTTP 403**) si le modèle demandé dépasse le plafond du palier.
+   - Les packs et leur crédit n'expirent pas automatiquement ; l'accès s'arrête lorsque le pack est désactivé ou son solde épuisé.
+   - Rejet net (**HTTP 402**) si le solde est épuisé ou le pack inactif.
+   - Rejet immédiat (**HTTP 403**) si le modèle demandé dépasse le seuil de coût du pack.
 
-2. **Les 7 Paliers d'Abonnement et Formule Mathématique de Filtrage** :
-   Chaque palier $P_i$ ($i \in [1..7]$) intègre la formule mathématique de filtrage par coût combiné maximum (Entrée + Sortie) par million de tokens :
-   $$\text{MaxAllowedCost}(P_i) = \alpha \times i + \beta \quad (\text{avec } \alpha = 5.00\$ \text{ et } \beta = 0.00\$)$$
-   - **Palier 1 (Starter)** : $\text{MaxAllowedCost} = 5.00\$ / 1\text{M}$ (ex: GPT-4o Mini, Gemini 2.0 Flash, DeepSeek-Chat, modèles gratuits).
-   - **Palier 2 (Basic)** : $\text{MaxAllowedCost} = 10.00\$ / 1\text{M}$ (modèles légers et polyvalents).
-   - **Palier 3 (Standard)** : $\text{MaxAllowedCost} = 15.00\$ / 1\text{M}$ (ex: GPT-4o, OpenAI o1-mini).
-   - **Palier 4 (Pro)** : $\text{MaxAllowedCost} = 20.00\$ / 1\text{M}$ (ex: Claude 3.5 Sonnet).
-   - **Palier 5 (Expert)** : $\text{MaxAllowedCost} = 25.00\$ / 1\text{M}$.
-   - **Palier 6 (Master)** : $\text{MaxAllowedCost} = 30.00\$ / 1\text{M}$.
-   - **Palier 7 (Enterprise)** : $\text{MaxAllowedCost} = 35.00\$ / 1\text{M}$.
+2. **Neuf packs pay-as-you-go et filtrage par crédit** :
+   - Trois familles : Étudiant & Découverte, Pro & Automatisation, Entreprise & Scale.
+   - Chaque pack crédite un montant USD fixe correspondant à son prix en milliers de FCFA (de 1 500 XOF / 1,50 USD à 30 000 XOF / 30 USD).
+   - Le coût combiné maximal des modèles payants est `crédit USD initial / 40` par million de tokens. Le catalogue est cumulatif à mesure que le crédit augmente.
+   - Les modèles fournisseur à coût nul sont signalés comme modèles de test, instables et soumis aux quotas du fournisseur ; ils ne consomment pas le crédit Axis.
 
-3. **Cycle de Vie des 30 Jours & Règle Anti-Abus des 7 Derniers Jours (J-7)** :
-   - **1 clé API = 1 abonnement actif unique** (pas de cumul non contrôlé).
-   - **Durée stricte de 30 jours calendaires**.
-   - **Règle J-7 :**
-     - À plus de 7 jours de l'échéance : tentative de réabonnement rejetée (HTTP 409 `EARLY_RENEWAL_FORBIDDEN`).
-     - Dans les 7 jours avant expiration (ou solde à 0) : souscription autorisée en statut `pending`.
-     - À l'expiration de l'actuel, le pack `pending` s'active **atomiquement** sans aucune interruption de service.
+3. **Cycle de vie des packs** :
+   - Une clé API est rattachée à un pack actif.
+   - Le crédit reste disponible sans échéance et peut être consommé jusqu'à épuisement.
+   - Un nouvel achat crée une demande de pack distincte, en attente de validation du paiement.
 
 4. **Mode Axis Auto (Routage Intelligent en 2 Étapes)** :
    - Les modèles sont classés en 4 niveaux de puissance : `low`, `medium`, `high`, `ultra` (raisonnement).
    - **Étape 1 (Décision) :** Analyse ultra-légère du prompt pour déterminer le niveau d'effort requis.
-   - **Étape 2 (Exécution) :** Routage vers le meilleur modèle disponible correspondant au palier de l'utilisateur ($\le \text{MaxAllowedCost}(P_i)$).
+   - **Étape 2 (Exécution) :** Routage vers un modèle payant du catalogue respectant le seuil de coût du pack.
 
 ---
 
 ## 🗄️ 1. Déploiement SQL dans Supabase
 
-Le script de migration complet est disponible dans :
-- [003_seven_tiers_lifecycle.sql](file:///c:/Users/ThinkPad/Desktop/Axis%20AI%20api/supabase/migrations/003_seven_tiers_lifecycle.sql)
+Les migrations Supabase sont dans `supabase/migrations/`. Pour une base existante, appliquez-les dans l'ordre, jusqu'à `007_pay_as_you_go_packs.sql`, qui ajoute le catalogue des neuf packs, les demandes de recharge sans expiration et la validation du crédit.
 
 ### Instructions d'installation dans Supabase :
 1. Rendez-vous sur votre tableau de bord Supabase : [https://supabase.com/dashboard/project/oahduqmmqiwdldsqmzhv](https://supabase.com/dashboard/project/oahduqmmqiwdldsqmzhv)
 2. Ouvrez l'onglet **SQL Editor**.
-3. Copiez l'intégralité du contenu de [003_seven_tiers_lifecycle.sql](file:///c:/Users/ThinkPad/Desktop/Axis%20AI%20api/supabase/migrations/003_seven_tiers_lifecycle.sql) et cliquez sur **Run**.
-4. Toutes les tables (`tiers`, `models`, `subscriptions`, `api_keys`, `usage_logs`) et fonctions RPC (`axis_subscribe`, `axis_gatekeeper_validate`, `axis_settle_usage`) sont alors prêtes.
+3. Appliquez les migrations dans l'ordre et cliquez sur **Run** pour chacune.
+4. La migration `007_pay_as_you_go_packs.sql` requiert le schéma des migrations précédentes (`profiles`, `tiers`, `models`, `subscriptions` et `api_keys`).
 
 ---
 
 ## 🧪 2. Journal des Tests & Exécution (`test-results.log`)
 
-La suite de validation technique complète couvre tous les scénarios critiques :
-- **Formule mathématique des 7 Paliers** ($P_1$ à $P_7$)
-- **Filtrage des modèles** (accès autorisé vs refus HTTP 403 strict)
-- **Cycle de vie 30 jours et expiration automatique** (HTTP 402 `SUBSCRIPTION_EXPIRED`)
-- **Épuisement des tokens / budget** (HTTP 402 `SUBSCRIPTION_DEPLETED`)
-- **Règle anti-abus des 7 jours** (Refus avant J-7, mise en attente `pending`, transition sans couture)
-- **Mode Axis Auto en 2 étapes** (Décision `low`/`medium`/`high`/`ultra` puis Exécution sous plafond)
-- **Test de charge et concurrence** (20 requêtes simultanées avec verrouillage atomique `FOR UPDATE`)
+La suite de tests existante se lance avec :
 
 Pour lancer la suite et mettre à jour le journal :
 ```bash
@@ -87,12 +73,9 @@ npm start
 
 ## 📡 4. Exemples d'Appels API
 
-### Souscrire à un palier (avec règle J-7)
-```bash
-curl -X POST http://localhost:3000/v1/subscriptions \
-  -H "Content-Type: application/json" \
-  -d '{"user_id": "00000000-0000-0000-0000-000000000001", "tier_number": 3}'
-```
+### Créer une demande de pack
+
+Le point d'entrée `POST /v1/subscriptions` attend un jeton utilisateur Supabase Bearer et un code de pack du catalogue. Exemple de corps : `{"pack_code":"starter-light"}`. Le paiement reste en attente jusqu'à sa validation.
 
 ### Requête de Complétion avec Axis Auto
 ```bash
@@ -105,13 +88,14 @@ curl -X POST http://localhost:3000/v1/chat/completions \
   }'
 ```
 
-### Tentative d'accès à un modèle hors palier (Exemple Palier 1 demandant Claude 3.5 Sonnet)
+### Tentative d'accès à un modèle hors seuil de pack
+
 ```bash
 # Réponse HTTP 403 :
 # {
 #   "error": {
-#     "code": "TIER_MODEL_NOT_PERMITTED",
-#     "message": "Ce modèle n'est pas inclus dans votre palier actuel."
+#     "code": "MODEL_NOT_PERMITTED_FOR_PACK",
+#     "message": "Ce modèle ne respecte pas le seuil de volume minimal du pack."
 #   }
 # }
 ```
